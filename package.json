@@ -1,0 +1,49 @@
+{
+  "name": "@darkhunt-security/telemetry",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": "^24.4.1"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/darkhunt-security/darkhunt-telemetry-ts.git"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/otlp-transformer": "^0.214.0",
+    "@opentelemetry/resources": "^2.0.0",
+    "@opentelemetry/sdk-trace-base": "^2.0.0",
+    "@opentelemetry/sdk-trace-node": "^2.0.0",
+    "@opentelemetry/semantic-conventions": "^1.30.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^25.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^10.0.0",
+    "eslint-plugin-prettier": "^5.5.5",
+    "prettier": "^3.8.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}

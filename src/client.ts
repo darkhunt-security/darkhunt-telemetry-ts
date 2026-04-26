@@ -1,0 +1,119 @@
+import { trace as otTrace, type Tracer } from '@opentelemetry/api';
+import { resourceFromAttributes } from '@opentelemetry/resources';
+import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
+import { DarkhuntSpanExporter } from './exporter.js';
+import { Trace, type TraceArgs } from './trace.js';
+
+const LIB_NAME = 'darkhunt-telemetry';
+const LIB_VERSION = '0.1.0';
+
+export interface DarkhuntTelemetryOptions {
+  baseUrl?: string;
+  flushAt?: number;
+  flushIntervalMs?: number;
+  timeoutMs?: number;
+  release?: string;
+  environment?: string;
+  enabled?: boolean;
+}
+
+export class DarkhuntTelemetry {
+  private readonly _enabled: boolean;
+  private readonly _release?: string;
+  private readonly _environment?: string;
+  private provider?: NodeTracerProvider;
+  private tracer?: Tracer;
+
+  constructor(options: DarkhuntTelemetryOptions = {}) {
+    const baseUrl = options.baseUrl ?? process.env.DARKHUNT_BASE_URL ?? 'http://localhost:8080';
+    this._release = options.release ?? process.env.DARKHUNT_RELEASE;
+    this._environment = options.environment ?? process.env.DARKHUNT_ENVIRONMENT;
+
+    const enabledEnv = process.env.DARKHUNT_ENABLED ?? 'true';
+    this._enabled = options.enabled ?? enabledEnv.toLowerCase() === 'true';
+
+    if (this._enabled) {
+      this.setupProvider({
+        baseUrl,
+        flushAt: options.flushAt ?? toInt(process.env.DARKHUNT_FLUSH_AT, 20),
+        flushIntervalMs:
+          options.flushIntervalMs ?? toFloat(process.env.DARKHUNT_FLUSH_INTERVAL, 5) * 1000,
+        timeoutMs: options.timeoutMs ?? toFloat(process.env.DARKHUNT_TIMEOUT, 10) * 1000,
+      });
+      process.once('beforeExit', () => {
+        void this.shutdown();
+      });
+    }
+  }
+
+  get enabled(): boolean {
+    return this._enabled;
+  }
+
+  trace(args: TraceArgs): Trace {
+    if (!this._enabled || !this.tracer) {
+      return new Trace(otTrace.getTracer(LIB_NAME, LIB_VERSION), args);
+    }
+    return new Trace(this.tracer, {
+      ...args,
+      release: args.release ?? this._release,
+      environment: args.environment ?? this._environment,
+    });
+  }
+
+  async flush(): Promise<void> {
+    if (this.provider) {
+      await this.provider.forceFlush();
+    }
+  }
+
+  async shutdown(): Promise<void> {
+    if (this.provider) {
+      await this.provider.shutdown();
+      this.provider = undefined;
+      this.tracer = undefined;
+    }
+  }
+
+  private setupProvider(opts: {
+    baseUrl: string;
+    flushAt: number;
+    flushIntervalMs: number;
+    timeoutMs: number;
+  }): void {
+    const resource = resourceFromAttributes({
+      [ATTR_SERVICE_NAME]: LIB_NAME,
+      [ATTR_SERVICE_VERSION]: LIB_VERSION,
+    });
+
+    const exporter = new DarkhuntSpanExporter({
+      baseUrl: opts.baseUrl,
+      timeoutMs: opts.timeoutMs,
+    });
+
+    this.provider = new NodeTracerProvider({
+      resource,
+      spanProcessors: [
+        new BatchSpanProcessor(exporter, {
+          maxExportBatchSize: opts.flushAt,
+          scheduledDelayMillis: opts.flushIntervalMs,
+        }),
+      ],
+    });
+
+    this.tracer = this.provider.getTracer(LIB_NAME, LIB_VERSION);
+  }
+}
+
+function toInt(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function toFloat(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const n = Number.parseFloat(value);
+  return Number.isFinite(n) ? n : fallback;
+}
