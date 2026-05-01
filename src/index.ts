@@ -3,6 +3,7 @@ export { Trace, type TraceArgs, type TraceUpdateArgs } from './trace.js';
 export {
   Span,
   Generation,
+  type ChatMessage,
   type SpanOptions,
   type SpanUpdateOptions,
   type SpanEndOptions,

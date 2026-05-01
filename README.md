@@ -189,7 +189,10 @@ The smallest useful unit: one trace, one generation. Use this shape inside any f
 async function answer(question: string) {
   const trace = dh.trace({
     name: 'answer',
-    tenantId: 't1', workspaceId: 'ws-1', applicationId: 'app-1', assessmentRunId: 'run-1',
+    tenantId: 't1',
+    workspaceId: 'ws-1',
+    applicationId: 'app-1',
+    assessmentRunId: 'run-1',
   });
   const gen = trace.generation('claude', {
     model: 'claude-opus-4',
@@ -209,7 +212,10 @@ A single user-facing interaction is one trace. Each model round-trip is a genera
 ```ts
 const trace = dh.trace({
   name: 'chat-session',
-  tenantId: 't1', workspaceId: 'ws-1', applicationId: 'app-1', assessmentRunId: 'run-1',
+  tenantId: 't1',
+  workspaceId: 'ws-1',
+  applicationId: 'app-1',
+  assessmentRunId: 'run-1',
   sessionId: 'sess-42',
   userId: 'alice@example.com',
 });
@@ -253,7 +259,10 @@ Two observations, two types: the retrieval shows up labelled `retriever` (vector
 ```ts
 const trace = dh.trace({
   name: 'rag-query',
-  tenantId: 't1', workspaceId: 'ws-1', applicationId: 'app-1', assessmentRunId: 'run-1',
+  tenantId: 't1',
+  workspaceId: 'ws-1',
+  applicationId: 'app-1',
+  assessmentRunId: 'run-1',
 });
 
 const retrieval = trace.span('vector-search', {
@@ -320,7 +329,10 @@ Sometimes you don't know `userId` or `sessionId` until after the first model cal
 ```ts
 const trace = dh.trace({
   name: 'request',
-  tenantId: 't1', workspaceId: 'ws-1', applicationId: 'app-1', assessmentRunId: 'run-1',
+  tenantId: 't1',
+  workspaceId: 'ws-1',
+  applicationId: 'app-1',
+  assessmentRunId: 'run-1',
 });
 
 const auth = trace.span('authenticate');
@@ -341,7 +353,10 @@ Show how an input check fits in front of the model. Tag the trace so you can lat
 ```ts
 const trace = dh.trace({
   name: 'moderated-chat',
-  tenantId: 't1', workspaceId: 'ws-1', applicationId: 'app-1', assessmentRunId: 'run-1',
+  tenantId: 't1',
+  workspaceId: 'ws-1',
+  applicationId: 'app-1',
+  assessmentRunId: 'run-1',
   tags: ['prod'],
 });
 

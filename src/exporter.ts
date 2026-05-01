@@ -1,3 +1,4 @@
+import { diag } from '@opentelemetry/api';
 import type { ExportResult } from '@opentelemetry/core';
 import { ExportResultCode } from '@opentelemetry/core';
 import { ProtobufTraceSerializer } from '@opentelemetry/otlp-transformer';
@@ -36,6 +37,8 @@ export class DarkhuntSpanExporter implements SpanExporter {
   private readonly timeoutMs: number;
   private readonly internal: boolean;
   private shutdownCalled = false;
+  /** Dedupe drop warnings — log once per (missing-fields, span-name) pair. */
+  private readonly droppedWarned = new Set<string>();
 
   constructor(options: DarkhuntSpanExporterOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
@@ -60,6 +63,24 @@ export class DarkhuntSpanExporter implements SpanExporter {
 
   async forceFlush(): Promise<void> {}
 
+  /**
+   * Log a one-line warning when a span is dropped for missing routing fields.
+   * Deduped on (span name, missing fields) so a chronic misconfig produces one
+   * line per call site, not one line per span.
+   */
+  private warnDroppedSpan(spanName: string, missing: string[]): void {
+    const key = `${spanName}::${missing.join(',')}`;
+    if (this.droppedWarned.has(key)) return;
+    this.droppedWarned.add(key);
+    diag.warn(
+      `DarkhuntSpanExporter: dropping span "${spanName}" — missing required ` +
+        `routing attribute(s): ${missing.join(', ')}. The exporter requires ` +
+        `tenantId, workspaceId, applicationId, and assessmentRunId on every ` +
+        `trace; spans without all four cannot be routed and are silently ` +
+        `discarded. Verify the caller passed them to client.trace({...}).`
+    );
+  }
+
   private async exportAsync(spans: ReadableSpan[]): Promise<ExportResult> {
     const groups = new Map<string, { route: RouteKey; spans: ReadableSpan[] }>();
 
@@ -70,6 +91,12 @@ export class DarkhuntSpanExporter implements SpanExporter {
       const applicationId = stringAttr(a[ATTR.APPLICATION_ID]);
       const assessmentRunId = stringAttr(a[ATTR.ASSESSMENT_RUN_ID]);
       if (!tenantId || !workspaceId || !applicationId || !assessmentRunId) {
+        const missing: string[] = [];
+        if (!tenantId) missing.push('tenantId');
+        if (!workspaceId) missing.push('workspaceId');
+        if (!applicationId) missing.push('applicationId');
+        if (!assessmentRunId) missing.push('assessmentRunId');
+        this.warnDroppedSpan(span.name, missing);
         continue;
       }
       const key = `${tenantId}|${workspaceId}|${applicationId}|${assessmentRunId}`;

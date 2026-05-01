@@ -33,4 +33,10 @@ export const GEN_AI = {
   USAGE_CACHE_READ_INPUT_TOKENS: 'gen_ai.usage.cache_read.input_tokens',
   USAGE_CACHE_CREATION_INPUT_TOKENS: 'gen_ai.usage.cache_creation.input_tokens',
   USAGE_COST: 'gen_ai.usage.cost',
+  /** OTel GenAI semantic convention for structured chat input. JSON-encoded array of {role, content}. */
+  INPUT_MESSAGES: 'gen_ai.input.messages',
+  /** OTel GenAI semantic convention for structured chat output. JSON-encoded array of {role, content}. */
+  OUTPUT_MESSAGES: 'gen_ai.output.messages',
+  /** OTel GenAI semantic convention for the system prompt sent to the model. */
+  SYSTEM_INSTRUCTIONS: 'gen_ai.system_instructions',
 } as const;

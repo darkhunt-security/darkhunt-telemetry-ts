@@ -20,10 +20,36 @@ export interface SpanOptions {
   observationType?: ObservationType;
 }
 
+/**
+ * A single chat-style message: `{role: "user"|"assistant"|..., content: "..."}`.
+ * Used for the OTel GenAI semantic-convention attributes
+ * `gen_ai.input.messages` and `gen_ai.output.messages`, which trace-hub
+ * renders as a structured conversation in its dashboard.
+ */
+export interface ChatMessage {
+  role: string;
+  content: string;
+  [extra: string]: unknown;
+}
+
 export interface SpanUpdateOptions {
   name?: string;
   input?: unknown;
   output?: unknown;
+  /**
+   * Structured chat input — sets `gen_ai.input.messages` (JSON-encoded array).
+   * Prefer this over `input` for LLM call spans so the dashboard can render
+   * each role in its own bubble.
+   */
+  inputMessages?: ChatMessage[];
+  /** Structured chat output — sets `gen_ai.output.messages` (JSON-encoded array). */
+  outputMessages?: ChatMessage[];
+  /**
+   * System prompt for the LLM call — sets `gen_ai.system_instructions`.
+   * Captured separately from `inputMessages` so it doesn't pollute the user
+   * conversation flow in the dashboard.
+   */
+  systemInstructions?: string;
   metadata?: Metadata;
   level?: ObservationLevel;
   statusMessage?: string;
@@ -32,6 +58,8 @@ export interface SpanUpdateOptions {
 
 export interface SpanEndOptions {
   output?: unknown;
+  /** See {@link SpanUpdateOptions.outputMessages}. */
+  outputMessages?: ChatMessage[];
   statusMessage?: string;
   level?: ObservationLevel;
 }
@@ -112,6 +140,15 @@ export class Span {
     if (options.name !== undefined) this.otelSpan.updateName(options.name);
     if (options.input !== undefined) this.setIo(ATTR.OBSERVATION_INPUT, options.input);
     if (options.output !== undefined) this.setIo(ATTR.OBSERVATION_OUTPUT, options.output);
+    if (options.inputMessages !== undefined) {
+      this.otelSpan.setAttribute(GEN_AI.INPUT_MESSAGES, JSON.stringify(options.inputMessages));
+    }
+    if (options.outputMessages !== undefined) {
+      this.otelSpan.setAttribute(GEN_AI.OUTPUT_MESSAGES, JSON.stringify(options.outputMessages));
+    }
+    if (options.systemInstructions !== undefined) {
+      this.otelSpan.setAttribute(GEN_AI.SYSTEM_INSTRUCTIONS, options.systemInstructions);
+    }
     if (options.metadata)
       this.otelSpan.setAttribute(ATTR.METADATA, JSON.stringify(options.metadata));
     if (options.level) this.otelSpan.setAttribute(ATTR.OBSERVATION_LEVEL, options.level);
@@ -126,6 +163,9 @@ export class Span {
     this.ended = true;
 
     if (options.output !== undefined) this.setIo(ATTR.OBSERVATION_OUTPUT, options.output);
+    if (options.outputMessages !== undefined) {
+      this.otelSpan.setAttribute(GEN_AI.OUTPUT_MESSAGES, JSON.stringify(options.outputMessages));
+    }
     if (options.statusMessage)
       this.otelSpan.setAttribute(ATTR.STATUS_MESSAGE, options.statusMessage);
     if (options.level) this.otelSpan.setAttribute(ATTR.OBSERVATION_LEVEL, options.level);
