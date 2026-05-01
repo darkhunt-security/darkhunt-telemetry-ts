@@ -10,12 +10,20 @@ const LIB_VERSION = '0.1.0';
 
 export interface DarkhuntTelemetryOptions {
   baseUrl?: string;
+  apiKey?: string;
   flushAt?: number;
   flushIntervalMs?: number;
   timeoutMs?: number;
   release?: string;
   environment?: string;
   enabled?: boolean;
+  /**
+   * When true, the exporter posts to trace-hub's `/internal/...` endpoint
+   * (no auth) instead of the public `/otlp/...` endpoint. Use for in-cluster
+   * service-to-service traffic. Also relaxes the apiKey requirement.
+   * Defaults to `false`, or `DARKHUNT_INTERNAL=true` env if set.
+   */
+  internal?: boolean;
 }
 
 export class DarkhuntTelemetry {
@@ -27,15 +35,29 @@ export class DarkhuntTelemetry {
 
   constructor(options: DarkhuntTelemetryOptions = {}) {
     const baseUrl = options.baseUrl ?? process.env.DARKHUNT_BASE_URL ?? 'http://localhost:8080';
+    const apiKey = options.apiKey ?? process.env.DARKHUNT_API_KEY ?? '';
     this._release = options.release ?? process.env.DARKHUNT_RELEASE;
     this._environment = options.environment ?? process.env.DARKHUNT_ENVIRONMENT;
 
     const enabledEnv = process.env.DARKHUNT_ENABLED ?? 'true';
     this._enabled = options.enabled ?? enabledEnv.toLowerCase() === 'true';
 
+    const internal =
+      options.internal ?? (process.env.DARKHUNT_INTERNAL ?? 'false').toLowerCase() === 'true';
+
+    // Internal endpoint is permitAll; no apiKey needed. Public endpoint requires one.
+    if (this._enabled && !internal && !apiKey) {
+      throw new Error(
+        'DarkhuntTelemetry: apiKey is required for the public endpoint ' +
+          '(pass via options, set DARKHUNT_API_KEY, or use internal: true)'
+      );
+    }
+
     if (this._enabled) {
       this.setupProvider({
         baseUrl,
+        apiKey,
+        internal,
         flushAt: options.flushAt ?? toInt(process.env.DARKHUNT_FLUSH_AT, 20),
         flushIntervalMs:
           options.flushIntervalMs ?? toFloat(process.env.DARKHUNT_FLUSH_INTERVAL, 5) * 1000,
@@ -78,6 +100,8 @@ export class DarkhuntTelemetry {
 
   private setupProvider(opts: {
     baseUrl: string;
+    apiKey: string;
+    internal: boolean;
     flushAt: number;
     flushIntervalMs: number;
     timeoutMs: number;
@@ -89,7 +113,9 @@ export class DarkhuntTelemetry {
 
     const exporter = new DarkhuntSpanExporter({
       baseUrl: opts.baseUrl,
+      apiKey: opts.apiKey,
       timeoutMs: opts.timeoutMs,
+      internal: opts.internal,
     });
 
     this.provider = new NodeTracerProvider({

@@ -19,17 +19,29 @@ interface RouteKey {
 
 export interface DarkhuntSpanExporterOptions {
   baseUrl: string;
+  apiKey: string;
   timeoutMs: number;
+  /**
+   * When true, post to `/internal/t/{tenantId}/v1/traces` (no auth required)
+   * instead of the public `/otlp/t/{tenantId}/v1/traces` path. For in-cluster
+   * service-to-service traffic where the upstream `X-Auth-User` header is
+   * not present.
+   */
+  internal?: boolean;
 }
 
 export class DarkhuntSpanExporter implements SpanExporter {
   private readonly baseUrl: string;
+  private readonly apiKey: string;
   private readonly timeoutMs: number;
+  private readonly internal: boolean;
   private shutdownCalled = false;
 
   constructor(options: DarkhuntSpanExporterOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+    this.apiKey = options.apiKey;
     this.timeoutMs = options.timeoutMs;
+    this.internal = options.internal ?? false;
   }
 
   export(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
@@ -82,7 +94,8 @@ export class DarkhuntSpanExporter implements SpanExporter {
       if (!body) {
         continue;
       }
-      const url = `${this.baseUrl}/internal/t/${encodeURIComponent(route.tenantId)}/v1/traces`;
+      const pathPrefix = this.internal ? 'internal' : 'otlp';
+      const url = `${this.baseUrl}/${pathPrefix}/t/${encodeURIComponent(route.tenantId)}/v1/traces`;
       const ok = await this.sendWithRetry(url, body, route);
       if (!ok) failed = true;
     }
@@ -91,16 +104,23 @@ export class DarkhuntSpanExporter implements SpanExporter {
   }
 
   private async sendWithRetry(url: string, body: Uint8Array, route: RouteKey): Promise<boolean> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/x-protobuf',
+      'X-Workspace-Id': route.workspaceId,
+      'X-Application-Id': route.applicationId,
+    };
+    // Internal endpoint is permitAll; the bearer header would be ignored. Skip
+    // it so we don't attach a stale/empty token to in-cluster requests.
+    if (!this.internal) {
+      headers.Authorization = `Bearer ${this.apiKey}`;
+    }
+
     let backoff = INITIAL_BACKOFF_MS;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         const resp = await fetch(url, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-protobuf',
-            'X-Workspace-Id': route.workspaceId,
-            'X-Application-Id': route.applicationId,
-          },
+          headers,
           body,
           signal: AbortSignal.timeout(this.timeoutMs),
         });
