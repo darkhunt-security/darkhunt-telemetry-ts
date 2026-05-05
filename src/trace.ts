@@ -3,10 +3,18 @@ import {
   trace as otTrace,
   type Context,
   type Span as OtelSpan,
+  type TimeInput,
   type Tracer,
 } from '@opentelemetry/api';
 import { ATTR } from './attributes.js';
-import { Generation, Span, type GenerationOptions, type SpanOptions } from './span.js';
+import type { Sanitizer } from './masking/index.js';
+import {
+  applyMetadataAttrs,
+  Generation,
+  Span,
+  type GenerationOptions,
+  type SpanOptions,
+} from './span.js';
 import type { Metadata } from './types.js';
 
 export interface TraceArgs {
@@ -22,6 +30,13 @@ export interface TraceArgs {
   metadata?: Metadata;
   release?: string;
   environment?: string;
+  /**
+   * Backdated trace start. Pass the wall-clock start of the work the trace
+   * represents (typically `Date.now()` captured before any awaited LLM call)
+   * when the trace is opened *after* the work has already begun. Without it,
+   * the recorded duration covers only the bookkeeping.
+   */
+  startTime?: TimeInput;
 }
 
 export interface TraceUpdateArgs {
@@ -43,6 +58,7 @@ export class Trace {
   private readonly tracer: Tracer;
   private readonly rootSpan: OtelSpan;
   private readonly rootContext: Context;
+  private readonly _sanitizer?: Sanitizer;
   private _name?: string;
   private _tenantId: string;
   private _workspaceId: string;
@@ -56,8 +72,9 @@ export class Trace {
   private _release?: string;
   private _environment?: string;
 
-  constructor(tracer: Tracer, args: TraceArgs) {
+  constructor(tracer: Tracer, args: TraceArgs, sanitizer?: Sanitizer) {
     this.tracer = tracer;
+    this._sanitizer = sanitizer;
     this._name = args.name;
     this._tenantId = args.tenantId;
     this._workspaceId = args.workspaceId;
@@ -71,7 +88,10 @@ export class Trace {
     this._release = args.release;
     this._environment = args.environment;
 
-    this.rootSpan = tracer.startSpan(args.name ?? 'trace');
+    this.rootSpan = tracer.startSpan(
+      args.name ?? 'trace',
+      args.startTime !== undefined ? { startTime: args.startTime } : undefined
+    );
     this.rootContext = otTrace.setSpan(otContext.active(), this.rootSpan);
     this.applyTraceAttrs(this.rootSpan);
   }
@@ -99,6 +119,10 @@ export class Trace {
   }
   get userEmail(): string | undefined {
     return this._userEmail;
+  }
+  /** Shared sanitizer applied at the Span choke points; undefined when masking is disabled. */
+  get sanitizer(): Sanitizer | undefined {
+    return this._sanitizer;
   }
 
   span(name: string, options?: SpanOptions): Span {
@@ -149,8 +173,8 @@ export class Trace {
     return this;
   }
 
-  end(): void {
-    this.rootSpan.end();
+  end(endTime?: TimeInput): void {
+    this.rootSpan.end(endTime);
   }
 
   private applyTraceAttrs(span: OtelSpan): void {
@@ -167,6 +191,6 @@ export class Trace {
       span.setAttribute(ATTR.TRACE_TAGS, this._tags.join(','));
     if (this._release) span.setAttribute(ATTR.RELEASE, this._release);
     if (this._environment) span.setAttribute(ATTR.ENVIRONMENT, this._environment);
-    if (this._metadata) span.setAttribute(ATTR.METADATA, JSON.stringify(this._metadata));
+    if (this._metadata) applyMetadataAttrs(span, this._metadata, this._sanitizer);
   }
 }

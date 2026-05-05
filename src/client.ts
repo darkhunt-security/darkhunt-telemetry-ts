@@ -3,10 +3,28 @@ import { resourceFromAttributes } from '@opentelemetry/resources';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 import { DarkhuntSpanExporter } from './exporter.js';
+import { Sanitizer, type CustomPattern } from './masking/index.js';
 import { Trace, type TraceArgs } from './trace.js';
 
 const LIB_NAME = 'darkhunt-telemetry';
 const LIB_VERSION = '0.1.0';
+
+export interface MaskingOptions {
+  /**
+   * Enable client-side data masking on inputs, outputs, messages, system
+   * prompts, metadata values, and status messages before they leave this
+   * process. Defaults to true — turning it off is rarely the right call,
+   * but available for local dev with synthetic data.
+   */
+  enabled?: boolean;
+  /**
+   * Operator-defined extra rules merged after the bundled defaults. The
+   * defaults already cover common secrets (API keys, tokens) and PII
+   * (emails, IBANs, credit cards, etc.) — use this only for site-specific
+   * patterns like internal ticket IDs.
+   */
+  customPatterns?: readonly CustomPattern[];
+}
 
 export interface DarkhuntTelemetryOptions {
   baseUrl?: string;
@@ -24,12 +42,15 @@ export interface DarkhuntTelemetryOptions {
    * Defaults to `false`, or `DARKHUNT_INTERNAL=true` env if set.
    */
   internal?: boolean;
+  /** Client-side data masking. Enabled by default. */
+  mask?: MaskingOptions;
 }
 
 export class DarkhuntTelemetry {
   private readonly _enabled: boolean;
   private readonly _release?: string;
   private readonly _environment?: string;
+  private readonly _sanitizer?: Sanitizer;
   private provider?: NodeTracerProvider;
   private tracer?: Tracer;
 
@@ -51,6 +72,11 @@ export class DarkhuntTelemetry {
         'DarkhuntTelemetry: apiKey is required for the public endpoint ' +
           '(pass via options, set DARKHUNT_API_KEY, or use internal: true)'
       );
+    }
+
+    const maskingEnabled = options.mask?.enabled ?? true;
+    if (this._enabled && maskingEnabled) {
+      this._sanitizer = new Sanitizer(undefined, options.mask?.customPatterns ?? []);
     }
 
     if (this._enabled) {
@@ -75,13 +101,17 @@ export class DarkhuntTelemetry {
 
   trace(args: TraceArgs): Trace {
     if (!this._enabled || !this.tracer) {
-      return new Trace(otTrace.getTracer(LIB_NAME, LIB_VERSION), args);
+      return new Trace(otTrace.getTracer(LIB_NAME, LIB_VERSION), args, this._sanitizer);
     }
-    return new Trace(this.tracer, {
-      ...args,
-      release: args.release ?? this._release,
-      environment: args.environment ?? this._environment,
-    });
+    return new Trace(
+      this.tracer,
+      {
+        ...args,
+        release: args.release ?? this._release,
+        environment: args.environment ?? this._environment,
+      },
+      this._sanitizer
+    );
   }
 
   async flush(): Promise<void> {

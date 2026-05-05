@@ -5,7 +5,15 @@ export const ATTR = {
   OBSERVATION_LEVEL: 'darkhunt.observation.level',
   STATUS_MESSAGE: 'darkhunt.status_message',
   VERSION: 'darkhunt.version',
-  METADATA: 'darkhunt.metadata',
+  /**
+   * Prefix for freeform metadata. Each entry is emitted as its own OTLP
+   * attribute keyed `darkhunt.observation.metadata.<userKey>`, matching the
+   * `metadataPrefix` declared in trace-hub's `mappings/darkhunt.yaml`. The
+   * consumer iterates attributes by prefix and strips it back off, so each
+   * entry must live in its own attribute — a single JSON-blob attribute
+   * gets dropped on ingest.
+   */
+  METADATA_PREFIX: 'darkhunt.observation.metadata.',
   TENANT_ID: 'darkhunt.tenant_id',
   WORKSPACE_ID: 'darkhunt.workspace_id',
   APPLICATION_ID: 'darkhunt.application_id',
