@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import { diag } from '@opentelemetry/api';
 import type { ExportResult } from '@opentelemetry/core';
 import { ExportResultCode } from '@opentelemetry/core';
@@ -186,8 +187,12 @@ export class DarkhuntSpanExporter implements SpanExporter {
       } catch {
         // network/timeout — retry
       }
-      const jitter = Math.random() * backoff * 0.5;
-      await sleep(backoff + jitter);
+      // Add 0–50% jitter so concurrent retrying clients don't synchronize.
+      // Use crypto.randomInt rather than Math.random — not for security
+      // reasons (jitter has no security impact), but to satisfy strict
+      // analyzers that flag every Math.random call.
+      const jitterMs = randomInt(0, Math.max(1, Math.floor(backoff * 0.5)));
+      await sleep(backoff + jitterMs);
       backoff = Math.min(backoff * BACKOFF_MULTIPLIER, MAX_BACKOFF_MS);
     }
     return false;

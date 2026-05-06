@@ -28,16 +28,17 @@ function hasValidIin(digits: string): boolean {
 
 /** Visa: 4XXX, length 13 or 16. */
 function isVisa(d: string, len: number): boolean {
-  return d.charAt(0) === '4' && (len === 13 || len === 16);
+  return d.startsWith('4') && (len === 13 || len === 16);
 }
 
 /** Mastercard: 51-55 OR 2221-2720, length 16. */
 function isMastercard(d: string, len: number): boolean {
   if (len !== 16) return false;
-  const d0 = d.charAt(0);
-  const d1 = d.charAt(1);
-  if (d0 === '5' && d1 >= '1' && d1 <= '5') return true;
-  if (d0 === '2') {
+  if (d.startsWith('5')) {
+    const d1 = d.charAt(1);
+    return d1 >= '1' && d1 <= '5';
+  }
+  if (d.startsWith('2')) {
     const prefix = Number.parseInt(d.slice(0, 4), 10);
     return prefix >= 2221 && prefix <= 2720;
   }
@@ -46,38 +47,34 @@ function isMastercard(d: string, len: number): boolean {
 
 /** Amex: 34 or 37, length 15. */
 function isAmex(d: string, len: number): boolean {
-  if (len !== 15) return false;
-  const d1 = d.charAt(1);
-  return d.charAt(0) === '3' && (d1 === '4' || d1 === '7');
+  return len === 15 && (d.startsWith('34') || d.startsWith('37'));
 }
 
 /** Diners: 300-305, 36, or 38, length 14. */
 function isDiners(d: string, len: number): boolean {
-  if (len !== 14 || d.charAt(0) !== '3') return false;
-  const d1 = d.charAt(1);
-  if (d1 === '0') {
+  if (len !== 14) return false;
+  if (d.startsWith('30')) {
     const d2 = d.charAt(2);
     return d2 >= '0' && d2 <= '5';
   }
-  return d1 === '6' || d1 === '8';
+  return d.startsWith('36') || d.startsWith('38');
 }
 
 /** JCB: 35XX, length 16. */
 function isJcb(d: string, len: number): boolean {
-  return len === 16 && d.charAt(0) === '3' && d.charAt(1) === '5';
+  return len === 16 && d.startsWith('35');
 }
 
 /** Discover: 6011, 65, 644-649, or 622126-622925; length 16. */
 function isDiscover(d: string, len: number): boolean {
-  if (len !== 16 || d.charAt(0) !== '6') return false;
-  const d1 = d.charAt(1);
-  if (d1 === '0') return d.charAt(2) === '1' && d.charAt(3) === '1';
-  if (d1 === '5') return true;
-  if (d1 === '4') {
+  if (len !== 16) return false;
+  if (d.startsWith('6011')) return true;
+  if (d.startsWith('65')) return true;
+  if (d.startsWith('64')) {
     const d2 = d.charAt(2);
     return d2 >= '4' && d2 <= '9';
   }
-  if (d1 === '2') {
+  if (d.startsWith('62')) {
     const prefix = Number.parseInt(d.slice(0, 6), 10);
     return prefix >= 622126 && prefix <= 622925;
   }
