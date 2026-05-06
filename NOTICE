@@ -1,0 +1,19 @@
+darkhunt-telemetry
+Copyright 2026 Darkhunt Security, Inc.
+
+This product includes software developed at Darkhunt Security, Inc.
+(https://darkhunt.ai/).
+
+This product bundles or depends on the following third-party software:
+
+  * The OpenTelemetry Authors — OpenTelemetry JavaScript SDK
+    (https://github.com/open-telemetry/opentelemetry-js)
+    Licensed under the Apache License, Version 2.0.
+
+  * Paul Miller — @noble/hashes
+    (https://github.com/paulmillr/noble-hashes)
+    Licensed under the MIT License.
+
+  * Darkhunt Security, Inc. — masking-schema (data-masking-rules.yaml + types)
+    (https://github.com/darkhunt-security/api-contract)
+    Licensed under the Apache License, Version 2.0.

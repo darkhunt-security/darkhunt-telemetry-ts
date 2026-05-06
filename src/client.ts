@@ -36,14 +36,35 @@ export interface DarkhuntTelemetryOptions {
   environment?: string;
   enabled?: boolean;
   /**
-   * When true, the exporter posts to trace-hub's `/internal/...` endpoint
-   * (no auth) instead of the public `/otlp/...` endpoint. Use for in-cluster
-   * service-to-service traffic. Also relaxes the apiKey requirement.
+   * When true, the exporter posts to the backend's permitAll `/internal/...`
+   * path instead of the auth-required `/otlp/...` path. Use for in-cluster
+   * service-to-service traffic where pod-to-pod requests don't carry the
+   * upstream auth header. Also relaxes the `apiKey` requirement.
    * Defaults to `false`, or `DARKHUNT_INTERNAL=true` env if set.
    */
   internal?: boolean;
   /** Client-side data masking. Enabled by default. */
   mask?: MaskingOptions;
+  /**
+   * Default routing fields applied to every trace from this client. Set them
+   * once here and {@link DarkhuntTelemetry.trace} calls only need to pass
+   * what's actually variable (typically just `assessmentRunId`, `sessionId`,
+   * `userId`, etc.). Per-trace args still win when explicitly provided.
+   *
+   * Each field also reads from a `DARKHUNT_*_ID` env var as a fallback:
+   *   - `tenantId`        → `DARKHUNT_TENANT_ID`
+   *   - `workspaceId`     → `DARKHUNT_WORKSPACE_ID`
+   *   - `applicationId`   → `DARKHUNT_APPLICATION_ID`
+   *   - `assessmentRunId` → `DARKHUNT_ASSESSMENT_RUN_ID`
+   *
+   * The four routing fields are required *somewhere* (constructor, env, or
+   * per-trace). {@link DarkhuntTelemetry.trace} throws if any is still
+   * missing after merging.
+   */
+  tenantId?: string;
+  workspaceId?: string;
+  applicationId?: string;
+  assessmentRunId?: string;
 }
 
 export class DarkhuntTelemetry {
@@ -51,14 +72,22 @@ export class DarkhuntTelemetry {
   private readonly _release?: string;
   private readonly _environment?: string;
   private readonly _sanitizer?: Sanitizer;
+  private readonly _tenantId?: string;
+  private readonly _workspaceId?: string;
+  private readonly _applicationId?: string;
+  private readonly _assessmentRunId?: string;
   private provider?: NodeTracerProvider;
   private tracer?: Tracer;
 
   constructor(options: DarkhuntTelemetryOptions = {}) {
-    const baseUrl = options.baseUrl ?? process.env.DARKHUNT_BASE_URL ?? 'http://localhost:8080';
+    const baseUrl = options.baseUrl ?? process.env.DARKHUNT_BASE_URL ?? 'https://app.darkhunt.ai';
     const apiKey = options.apiKey ?? process.env.DARKHUNT_API_KEY ?? '';
     this._release = options.release ?? process.env.DARKHUNT_RELEASE;
     this._environment = options.environment ?? process.env.DARKHUNT_ENVIRONMENT;
+    this._tenantId = options.tenantId ?? process.env.DARKHUNT_TENANT_ID;
+    this._workspaceId = options.workspaceId ?? process.env.DARKHUNT_WORKSPACE_ID;
+    this._applicationId = options.applicationId ?? process.env.DARKHUNT_APPLICATION_ID;
+    this._assessmentRunId = options.assessmentRunId ?? process.env.DARKHUNT_ASSESSMENT_RUN_ID;
 
     const enabledEnv = process.env.DARKHUNT_ENABLED ?? 'true';
     this._enabled = options.enabled ?? enabledEnv.toLowerCase() === 'true';
@@ -99,19 +128,25 @@ export class DarkhuntTelemetry {
     return this._enabled;
   }
 
-  trace(args: TraceArgs): Trace {
-    if (!this._enabled || !this.tracer) {
-      return new Trace(otTrace.getTracer(LIB_NAME, LIB_VERSION), args, this._sanitizer);
-    }
-    return new Trace(
-      this.tracer,
-      {
-        ...args,
-        release: args.release ?? this._release,
-        environment: args.environment ?? this._environment,
-      },
-      this._sanitizer
-    );
+  trace(args: TraceArgs = {}): Trace {
+    const merged: TraceArgs = {
+      ...args,
+      tenantId: args.tenantId ?? this._tenantId,
+      workspaceId: args.workspaceId ?? this._workspaceId,
+      applicationId: args.applicationId ?? this._applicationId,
+      assessmentRunId: args.assessmentRunId ?? this._assessmentRunId,
+      release: args.release ?? this._release,
+      environment: args.environment ?? this._environment,
+    };
+
+    requireField(merged.tenantId, 'tenantId', 'DARKHUNT_TENANT_ID');
+    requireField(merged.workspaceId, 'workspaceId', 'DARKHUNT_WORKSPACE_ID');
+    requireField(merged.applicationId, 'applicationId', 'DARKHUNT_APPLICATION_ID');
+    requireField(merged.assessmentRunId, 'assessmentRunId', 'DARKHUNT_ASSESSMENT_RUN_ID');
+
+    const tracer =
+      this._enabled && this.tracer ? this.tracer : otTrace.getTracer(LIB_NAME, LIB_VERSION);
+    return new Trace(tracer, merged, this._sanitizer);
   }
 
   async flush(): Promise<void> {
@@ -159,6 +194,20 @@ export class DarkhuntTelemetry {
     });
 
     this.tracer = this.provider.getTracer(LIB_NAME, LIB_VERSION);
+  }
+}
+
+function requireField(
+  value: string | undefined,
+  optionName: string,
+  envVarName: string
+): asserts value is string {
+  if (!value) {
+    throw new Error(
+      `DarkhuntTelemetry: ${optionName} is required. ` +
+        `Pass it on dh.trace({ ${optionName}: ... }), set it as a default on ` +
+        `new DarkhuntTelemetry({ ${optionName}: ... }), or set the ${envVarName} env var.`
+    );
   }
 }
 

@@ -19,10 +19,18 @@ import type { Metadata } from './types.js';
 
 export interface TraceArgs {
   name?: string;
-  tenantId: string;
-  workspaceId: string;
-  applicationId: string;
-  assessmentRunId: string;
+  /**
+   * Routing fields. Required for spans to actually be routed and ingested.
+   * Optional here because {@link DarkhuntTelemetry.trace} merges in defaults
+   * from the {@code DarkhuntTelemetry} constructor / environment before
+   * constructing the trace, and throws if any field is still missing after
+   * the merge. If you construct {@link Trace} directly without going through
+   * the client, the exporter will drop spans that lack these.
+   */
+  tenantId?: string;
+  workspaceId?: string;
+  applicationId?: string;
+  assessmentRunId?: string;
   sessionId?: string;
   userId?: string;
   userEmail?: string;
@@ -76,10 +84,13 @@ export class Trace {
     this.tracer = tracer;
     this._sanitizer = sanitizer;
     this._name = args.name;
-    this._tenantId = args.tenantId;
-    this._workspaceId = args.workspaceId;
-    this._applicationId = args.applicationId;
-    this._assessmentRunId = args.assessmentRunId;
+    // Routing fields are validated upstream by DarkhuntTelemetry.trace(). Direct
+    // Trace construction without them will silent-drop at the exporter (which
+    // warns about missing routing attributes).
+    this._tenantId = args.tenantId ?? '';
+    this._workspaceId = args.workspaceId ?? '';
+    this._applicationId = args.applicationId ?? '';
+    this._assessmentRunId = args.assessmentRunId ?? '';
     this._sessionId = args.sessionId;
     this._userId = args.userId;
     this._userEmail = args.userEmail;

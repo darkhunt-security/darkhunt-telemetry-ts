@@ -8,11 +8,11 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { loadDefaults } from '@darkhunt-security/masking-schema';
-import type { MaskingRulesFile } from '@darkhunt-security/masking-schema';
+import bundledRules from '../../src/masking/rules/rules.json' with { type: 'json' };
+import type { MaskingRulesFile } from '../../src/masking/rules/types.js';
 import { Sanitizer } from '../../src/masking/sanitizer.js';
 
-const rulesFile = loadDefaults() as MaskingRulesFile;
+const rulesFile = bundledRules as MaskingRulesFile;
 const sanitizer = new Sanitizer();
 
 describe('every rule has at least one example', () => {

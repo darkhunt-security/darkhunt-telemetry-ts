@@ -11,27 +11,37 @@ const ADDR_RE = /^0[xX][0-9a-fA-F]{40}$/;
 
 export function eip55(input: string): boolean {
   if (!ADDR_RE.test(input)) return false;
-
   const addr = input.slice(2);
   const lower = addr.toLowerCase();
-  const upper = addr.toUpperCase();
+  // All lowercase or all uppercase has no case pattern to verify per EIP-55.
+  if (addr === lower || addr === addr.toUpperCase()) return true;
+  return matchesChecksum(addr, lower);
+}
 
-  // All lowercase or all uppercase is acceptable per EIP-55 (no checksum to verify)
-  if (addr === lower || addr === upper) return true;
-
-  // Mixed case: each hex char's case must match keccak256(lowercase) bit pattern
+/** For each hex char, verify its case matches the keccak256(lower) bit at that position. */
+function matchesChecksum(addr: string, lower: string): boolean {
   const hashBytes = keccak_256(lower);
   for (let i = 0; i < 40; i++) {
-    const ch = addr.charCodeAt(i);
-    if (ch >= 97 /* 'a' */ && ch <= 102 /* 'f' */) {
-      // Must be lowercase → corresponding nibble < 8
-      const nibble = (hashBytes[i >> 1]! >> (i % 2 === 0 ? 4 : 0)) & 0x0f;
-      if (nibble >= 8) return false;
-    } else if (ch >= 65 /* 'A' */ && ch <= 70 /* 'F' */) {
-      // Must be uppercase → corresponding nibble >= 8
-      const nibble = (hashBytes[i >> 1]! >> (i % 2 === 0 ? 4 : 0)) & 0x0f;
-      if (nibble < 8) return false;
+    if (!charCaseMatchesNibble(addr.charCodeAt(i), nibbleAt(hashBytes, i))) {
+      return false;
     }
   }
+  return true;
+}
+
+/** Extract the i-th hex nibble of a byte array (i=0 → high nibble of byte 0, i=1 → low nibble, …). */
+function nibbleAt(bytes: Uint8Array, i: number): number {
+  return (bytes[i >> 1]! >> (i % 2 === 0 ? 4 : 0)) & 0x0f;
+}
+
+/**
+ * EIP-55 case rule for one position:
+ *   - hex letter a-f → nibble must be < 8 (hash bit clear ⇒ lowercase)
+ *   - hex letter A-F → nibble must be ≥ 8 (hash bit set   ⇒ uppercase)
+ *   - digit 0-9      → no case constraint
+ */
+function charCaseMatchesNibble(ch: number, nibble: number): boolean {
+  if (ch >= 97 /* 'a' */ && ch <= 102 /* 'f' */) return nibble < 8;
+  if (ch >= 65 /* 'A' */ && ch <= 70 /* 'F' */) return nibble >= 8;
   return true;
 }

@@ -1,0 +1,575 @@
+version: '2026.5.6'
+
+rules:
+  # --- Secrets & Tokens ---
+
+  - name: darkhunt_api_key
+    description: 'Darkhunt API key (dh- prefix followed by UUID and base64url secret)'
+    examples:
+      - 'dh-74474d9c-548d-4076-81b6-8e4edb4d947d.QKvZ2duNmBaOOX98FxoNZXpRzycxVXyNGy17oz70l_Y'
+    marker: '[SECRET]'
+    pattern: "dh-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.[A-Za-z0-9_\\-]{20,}"
+
+  - name: aws_key
+    description: 'AWS access key ID (starts with AKIA, ASIA, etc.)'
+    examples:
+      - 'AKIAIOSFODNN7EXAMPLE'
+      - 'ASIAJEXAMPLEKEYID0001'
+    marker: '[SECRET]'
+    pattern: '(?:A3T[A-Z0-9]|ABIA|ACCA|AKIA|ASIA)[0-9A-Z]{16}'
+
+  - name: github_token
+    description: 'GitHub personal access or OAuth token (ghp_, gho_, etc.)'
+    examples:
+      - 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh12'
+      - 'gho_16C7e42F292c6912E7710c838347Ae178B4a'
+    marker: '[SECRET]'
+    pattern: '(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,}'
+
+  - name: gitlab_token
+    description: 'GitLab personal, deploy, or service account token'
+    examples:
+      - 'glpat-ABCDeFgHiJkLmNoPqRsT'
+      - 'gldt-xY9z_example-token_val'
+    marker: '[SECRET]'
+    pattern: "(?:glpat|gldt|glft|glsoat|glrt)-[A-Za-z0-9_\\-]{20,}"
+
+  - name: slack_token
+    description: 'Slack API token (xoxb, xoxp, xoxa, etc.)'
+    examples:
+      - 'xoxb-123456789012-1234567890123-ABCDefGhIjKlMnOpQrStUvWx'
+      - 'xoxp-123456789012-123456789012-123456789012-abcdef1234567890abcdef1234567890'
+    marker: '[SECRET]'
+    pattern: "xox[abposr]-(?:\\d+-)+[A-Za-z0-9]+"
+    caseSensitive: false
+
+  - name: stripe_key
+    description: 'Stripe live secret or restricted key'
+    examples:
+      - 'sk_live_4eC39HqLyjWDarjtT1zdp7dc'
+      - 'rk_live_26PHem9AhJZvU623DfE1x4sd'
+    marker: '[SECRET]'
+    pattern: '[rs]k_live_[0-9a-zA-Z]{24,}'
+
+  - name: sendgrid_key
+    description: 'SendGrid API key'
+    examples:
+      - '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'
+      - 'SG.abCDefGHijKLmnOPqrSTuv.wxYZ0123456789abcdefghijklmnopqrstuvwxyz01234'
+    marker: '[SECRET]'
+    pattern: "SG\\.[a-zA-Z0-9_\\-]{22}\\.[a-zA-Z0-9_\\-]{43}"
+
+  - name: twilio_key
+    description: 'Twilio account SID or API key'
+    examples:
+      - 'ACe1234567890abcdef1234567890abcde'
+      - 'SK0123456789abcdef0123456789abcdef'
+    marker: '[SECRET]'
+    pattern: '(?:AC|SK)[a-z0-9]{32}'
+
+  - name: jwt
+    description: 'JSON Web Token (base64-encoded header.payload.signature)'
+    examples:
+      - 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U'
+      - 'eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJleGFtcGxlIn0.signature_data_here'
+    marker: '[SECRET]'
+    pattern: "eyJ[A-Za-z0-9\\-_=]+\\.[A-Za-z0-9\\-_=]+\\.[A-Za-z0-9\\-_.+/=]*"
+
+  - name: private_key_block
+    description: 'PEM-encoded private key, full BEGIN/END block (RSA, DSA, EC, OpenSSH, PGP)'
+    examples:
+      - "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----"
+      - "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXkt...\n-----END OPENSSH PRIVATE KEY-----"
+    marker: '[SECRET]'
+    pattern: "-----BEGIN (?:RSA |DSA |EC |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----[\\s\\S]*?-----END (?:RSA |DSA |EC |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----"
+
+  - name: private_key
+    description: 'PEM-encoded private key header (fallback for truncated/header-only occurrences)'
+    examples:
+      - '-----BEGIN RSA PRIVATE KEY-----'
+      - '-----BEGIN PRIVATE KEY-----'
+    marker: '[SECRET]'
+    pattern: '-----BEGIN (?:RSA |DSA |EC |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----'
+
+  - name: openai_key
+    description: 'OpenAI API secret key'
+    examples:
+      - 'sk-proj-abc123def456ghi789jklmnopqrstuvwx'
+      - 'sk-svcacct-example0key12345678901234'
+    marker: '[SECRET]'
+    pattern: "sk-[A-Za-z0-9\\-_]*[A-Za-z0-9]{20,}"
+
+  - name: bearer_token
+    description: 'HTTP Bearer authorization token'
+    examples:
+      - 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc'
+      - 'Bearer dGhpcyBpcyBhIHNhbXBsZSB0b2tlbg=='
+    marker: '[SECRET]'
+    pattern: "Bearer\\s+[A-Za-z0-9_.~+/=-]{20,}"
+    caseSensitive: false
+
+  - name: basic_auth_url
+    description: 'Credentials embedded in URL (user:pass@host)'
+    examples:
+      - 'https://admin:s3cretP4ss@db.example.com:5432'
+      - 'mongodb://appuser:Xy9$mK2w@cluster0.mongodb.net'
+    marker: '[SECRET]'
+    pattern: "://[^\\s/:@]+:([^\\s/@]+)@"
+
+  - name: azure_storage_key
+    description: 'Azure Storage account key'
+    examples:
+      - 'AccountKey=abc123DEFghiJKLmnoPQRstuVWXyz0123456789+/ABCDefGHIjklMNOpqrSTUvwxYZ0123456789+/ABCDE=='
+      - 'AccountKey=0123456789abcdefABCDEF+/0123456789abcdefABCDEF+/0123456789abcdefABCDEF+/0123456789ab=='
+    marker: '[SECRET]'
+    pattern: 'AccountKey=[a-zA-Z0-9+/=]{88}'
+
+  - name: discord_bot_token
+    description: 'Discord bot or user authentication token'
+    examples:
+      - 'MTAxNzE4MjA1MjM0NjcyNjQw.GmAhVQ.Example_Token_abcdefghij12345'
+      - 'NzE4MjA1MjM0NjcyNjQwMTAx.Xab12Q.abcdefghijklmnopqrstuvwxyz_01'
+    marker: '[SECRET]'
+    pattern: "[MNO][a-zA-Z\\d_\\-]{23,25}\\.[a-zA-Z\\d_\\-]{6}\\.[a-zA-Z\\d_\\-]{27,}"
+
+  - name: npm_token
+    description: 'npm access token'
+    examples:
+      - 'npm_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789'
+      - 'npm_1234567890abcdefABCDEFghijklmnopqrst'
+    marker: '[SECRET]'
+    pattern: 'npm_[A-Za-z0-9]{36,}'
+
+  - name: pypi_token
+    description: 'PyPI API token'
+    examples:
+      - 'pypi-AgEIcHlwaS5vcmcCJGY3ZjFkN2VkLWQwMTEtNDFkMy1iNDdmLTVmMzgwNjBkMzhhMwACKlszLCJk'
+      - 'pypi-BbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdefghijklmnopqrstuvwxyz0123456789_-'
+    marker: '[SECRET]'
+    pattern: "pypi-[A-Za-z0-9\\-_]{70,}"
+
+  - name: artifactory_token
+    description: 'JFrog Artifactory API key or token'
+    examples:
+      - 'AKCp8example1234567890'
+      - 'APBexampleToken12345678'
+    marker: '[SECRET]'
+    pattern: '(?:AKC|AP[A-Z])[a-zA-Z0-9]{10,}'
+
+  - name: mailchimp_key
+    description: 'Mailchimp API key'
+    examples:
+      - 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4-us14'
+      - '0123456789abcdef0123456789abcdef-us6'
+    marker: '[SECRET]'
+    pattern: '[0-9a-z]{32}-us[0-9]{1,2}'
+
+  - name: password_assignment
+    description: 'Password or secret assigned in code or config (key=value pattern)'
+    examples:
+      - "password='MyS3cureP@ssw0rd!'"
+      - 'api_key = "abcdef1234567890abcd"'
+    marker: '[SECRET]'
+    pattern: "(?:password|passwd|pwd|secret|api_?key|auth_?key|private_?key|access_?key)\\s*[:=]\\s*[\"']([^\"'\\s]{8,})[\"']"
+    caseSensitive: false
+
+  # --- detect-secrets additional ---
+
+  - name: square_oauth
+    description: 'Square OAuth secret'
+    examples:
+      - 'sq0csp-abcDEFghiJKLmnoPQRstuVWXyz01234567890abcdef'
+      - 'sq0csp-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefg'
+    marker: '[SECRET]'
+    pattern: "sq0csp-[0-9A-Za-z\\\\\\-_]{43}"
+
+  - name: telegram_bot_token
+    description: 'Telegram Bot API token'
+    examples:
+      - '123456789:ABCDefGhIJKlmNoPQRsTUVwxyZ012345678'
+      - '9876543210:abcdefghijklmnopqrstuvwxyz012345678'
+    marker: '[SECRET]'
+    pattern: "\\b\\d{8,10}:[0-9A-Za-z_\\-]{35}\\b"
+
+  - name: cloudant_key
+    description: 'IBM Cloudant database credential'
+    examples:
+      - "cloudant_key='a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2'"
+      - 'clou_password="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"'
+    marker: '[SECRET]'
+    pattern: "(?:cloudant|cl|clou)(?:_|-)?(?:api)?(?:key|pwd|password|pass|token)\\s*[:=]\\s*[\"']?([0-9a-f]{64})[\"']?"
+    caseSensitive: false
+
+  - name: ibm_cloud_iam
+    description: 'IBM Cloud IAM API key or token'
+    examples:
+      - "ibm_cloud_iam_api_key='abcDEF_GHIjklMNO-PQRstu_VWXyz0123456789abcde'"
+      - 'cloud_iam_token="ABCDefghIJKLmnopQRSTuvwxYZ01234567890abcdefg"'
+    marker: '[SECRET]'
+    pattern: "(?:ibm[_-]?cloud[_-]?iam|cloud[_-]?iam|ibm[_-]?iam)[_-]?(?:api)?[_-]?(?:key|token)\\s*[:=]\\s*[\"']?([a-zA-Z0-9_\\-]{44})[\"']?"
+    caseSensitive: false
+
+  - name: softlayer_key
+    description: 'IBM SoftLayer API key or password'
+    examples:
+      - "softlayer_api_key='a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2'"
+      - 'sl_password="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"'
+    marker: '[SECRET]'
+    pattern: "(?:softlayer|sl)[_-]?(?:api)?[_-]?(?:key|token|password|pass)\\s*[:=]\\s*[\"']?([a-z0-9]{64})[\"']?"
+    caseSensitive: false
+
+  # --- Additional provider tokens ---
+
+  - name: google_api_key
+    description: 'Google API key'
+    examples:
+      - 'AIzaSyA1bcDefGHIjklMNopQRSTuvWXyz0123456'
+      - 'AIzaB9cD-eFgHiJkLmNoPqRsTuVwXyZ_0123456'
+    marker: '[SECRET]'
+    pattern: "AIza[0-9A-Za-z\\-_]{35}"
+
+  - name: heroku_api_key
+    description: 'Heroku API key or token (UUID format)'
+    examples:
+      - "heroku_api_key='12345678-abcd-ef01-2345-6789abcdef01'"
+      - 'heroku_token="abcdef01-2345-6789-abcd-ef0123456789"'
+    marker: '[SECRET]'
+    pattern: "(?:heroku[_-]?(?:api)?[_-]?(?:key|token))\\s*[:=]\\s*[\"']?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})[\"']?"
+    caseSensitive: false
+
+  - name: databricks_token
+    description: 'Databricks personal access token'
+    examples:
+      - 'dapi0123456789abcdef0123456789abcdef'
+      - 'dapiabcdef0123456789abcdef0123456789'
+    marker: '[SECRET]'
+    pattern: 'dapi[a-z0-9]{32}'
+
+  - name: huggingface_token
+    description: 'Hugging Face API token'
+    examples:
+      - 'hf_ABCDefghIJKLmnopQRSTuvwxYZ0123456789'
+      - 'hf_abcdefghijklmnopqrstuvwxyz0123456789'
+    marker: '[SECRET]'
+    pattern: 'hf_[A-Za-z0-9]{34,}'
+
+  - name: anthropic_key
+    description: 'Anthropic API secret key'
+    examples:
+      - 'sk-ant-api03-abcDEFghiJKLmnoPQRst'
+      - 'sk-ant-sid01-xyzABCdef123456_7890'
+    marker: '[SECRET]'
+    pattern: "sk-ant-[A-Za-z0-9\\-_]{20,}"
+
+  - name: shopify_token
+    description: 'Shopify access, custom app, or private app token'
+    examples:
+      - 'shpat_abcdef1234567890abcdef1234567890ab'
+      - 'shpca_0123456789abcdef0123456789abcdef01'
+    marker: '[SECRET]'
+    pattern: 'shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32,}'
+
+  - name: datadog_api_key
+    description: 'Datadog API or application key'
+    examples:
+      - "dd_api_key='a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4'"
+      - 'dd-app-key="0123456789abcdef0123456789abcdef01234567"'
+    marker: '[SECRET]'
+    pattern: "(?:dd(?:_|-)?(?:api|app)[_-]?key)\\s*[:=]\\s*[\"']?([a-z0-9]{32,40})[\"']?"
+    caseSensitive: false
+
+  - name: supabase_key
+    description: 'Supabase service role or API key'
+    examples:
+      - 'sbp_abcdef0123456789abcdef0123456789abcdef01'
+      - 'sbp_0123456789abcdef0123456789abcdef0123456789'
+    marker: '[SECRET]'
+    pattern: 'sbp_[a-f0-9]{40,}'
+
+  - name: digitalocean_token
+    description: 'DigitalOcean personal access or OAuth token'
+    examples:
+      - 'doo_v1_abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'
+      - 'dop_v1_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+    marker: '[SECRET]'
+    pattern: 'do[op]_v1_[a-f0-9]{64}'
+
+  - name: grafana_token
+    description: 'Grafana service account or cloud API token'
+    examples:
+      - 'glsa_ABCDefghIJKLmnopQRSTuvwxYZ012345'
+      - 'glc_abcdefghijklmnopqrstuvwxyz01234567'
+    marker: '[SECRET]'
+    pattern: '(?:glsa|glc)_[A-Za-z0-9_]{32,}'
+
+  - name: hashicorp_vault_token
+    description: 'HashiCorp Vault service token'
+    examples:
+      - 'hvs.ABCDEfghijKLMNopqrSTUVwx'
+      - 'hvs.CAESIExampleTokenValue_abcd'
+    marker: '[SECRET]'
+    pattern: "hvs\\.[A-Za-z0-9_\\-]{24,}"
+
+  - name: okta_token
+    description: 'Okta API token (42 chars starting with 00)'
+    examples:
+      - '00ABCDefghijklmnOPQRSTUVWXYZ0123456789abcd'
+      - '00abcdefghijklmnopqrstuvwxyz0123456789ABcd'
+    marker: '[SECRET]'
+    pattern: "\\b00[A-Za-z0-9_\\-]{40}\\b"
+
+  - name: vercel_token
+    description: 'Vercel authentication token'
+    examples:
+      - 'vercel_ABCDefghijklmnOPQRSTUVwx'
+      - 'vercel_abcdef0123456789abcdefgh'
+    marker: '[SECRET]'
+    pattern: "vercel_[A-Za-z0-9_\\-]{24,}"
+
+  - name: linear_api_key
+    description: 'Linear API key'
+    examples:
+      - 'lin_api_ABCDefghIJKLmnopQRSTuvwxYZ01234567890123'
+      - 'lin_api_abcdefghijklmnopqrstuvwxyz01234567890123'
+    marker: '[SECRET]'
+    pattern: 'lin_api_[A-Za-z0-9]{40,}'
+
+  - name: sentry_dsn
+    description: 'Sentry DSN containing project secret key'
+    examples:
+      - 'https://abcdef0123456789abcdef0123456789@o123456.ingest.sentry.io/1234567'
+      - 'https://0123456789abcdef0123456789abcdef@app.ingest.sentry.io/9876543'
+    marker: '[SECRET]'
+    pattern: "https://[a-f0-9]{32}@[a-z0-9.]+\\.ingest\\.sentry\\.io/\\d+"
+
+  - name: algolia_key
+    description: 'Algolia search API key'
+    examples:
+      - "algolia_api_key='a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4'"
+      - 'algolia_key="0123456789abcdef0123456789abcdef"'
+    marker: '[SECRET]'
+    pattern: "(?:algolia[_-]?(?:api)?[_-]?key)\\s*[:=]\\s*[\"']?([a-z0-9]{32})[\"']?"
+    caseSensitive: false
+
+  - name: postman_api_key
+    description: 'Postman API key'
+    examples:
+      - 'PMAK-abcdef0123456789abcdef01-234567890abcdef01'
+      - 'PMAK-0123456789abcdefABCDEF01-234567890abcdef01'
+    marker: '[SECRET]'
+    pattern: "PMAK-[A-Za-z0-9\\-]{36,}"
+
+  - name: mapbox_token
+    description: 'Mapbox public or secret access token'
+    examples:
+      - 'pk.eyJhIjoiZXhhbXBsZSJ9.abcdefghijklmnopqrst'
+      - 'sk.eyJhIjoic2VjcmV0In0.ABCDefghIJKLmnopQRSTuv'
+    marker: '[SECRET]'
+    pattern: "(?:sk|pk)\\.eyJ[A-Za-z0-9\\-_]+\\.[A-Za-z0-9\\-_]{20,}"
+
+  - name: circleci_token
+    description: 'CircleCI personal API token'
+    examples:
+      - "circle_ci_token='abcdef0123456789abcdef0123456789abcdef01'"
+      - 'circleci_token="0123456789abcdef0123456789abcdef01234567"'
+    marker: '[SECRET]'
+    pattern: "(?:circle[_-]?(?:ci)?[_-]?token)\\s*[:=]\\s*[\"']?([a-f0-9]{40})[\"']?"
+    caseSensitive: false
+
+  - name: netlify_token
+    description: 'Netlify personal access token'
+    examples:
+      - 'nfp_ABCDefghIJKLmnopQRSTuvwxYZ01234567890123'
+      - 'nfp_abcdefghijklmnopqrstuvwxyz01234567890123'
+    marker: '[SECRET]'
+    pattern: 'nfp_[A-Za-z0-9]{40,}'
+
+  - name: newrelic_key
+    description: 'New Relic API key'
+    examples:
+      - 'NRAK-ABCDEFGHIJKLMNOPQRSTUVWXYZA'
+      - 'NRAK-0123456789ABCDEFGHIJKLMNOPQ'
+    marker: '[SECRET]'
+    pattern: 'NRAK-[A-Z0-9]{27}'
+
+  - name: figma_token
+    description: 'Figma personal access token'
+    examples:
+      - 'figd_ABCDefgh-IJKLmnop_QRSTuv'
+      - 'figd_abcdefghijklmnopqrstuvwxyz'
+    marker: '[SECRET]'
+    pattern: "figd_[A-Za-z0-9\\-_]{22,}"
+
+  - name: planetscale_token
+    description: 'PlanetScale database service token'
+    examples:
+      - 'pscale_tkn_ABCDefghIJKLmnopQRSTuvwxYZ0123'
+      - 'pscale_tkn_abcdefghijklmnopqrstuvwxyz012345'
+    marker: '[SECRET]'
+    pattern: "pscale_tkn_[A-Za-z0-9_\\-]{30,}"
+
+  - name: contentful_token
+    description: 'Contentful personal access token'
+    examples:
+      - 'CFPAT-ABCDefghIJKLmnopQRSTuvwxYZ0123456789abcdefgh'
+      - 'CFPAT-abcdefghijklmnopqrstuvwxyz0123456789_ABCDEFGH'
+    marker: '[SECRET]'
+    pattern: "CFPAT-[A-Za-z0-9_\\-]{43,}"
+
+  - name: connection_string_secret
+    description: 'Unquoted secret assignment in connection strings or env files (ADO.NET, JDBC query, .env)'
+    examples:
+      - 'Server=x;Password=hunter2;User Id=bar'
+      - 'jdbc:postgresql://host/db?user=u&password=sekret123'
+      - 'DB_PASSWORD=abcdef1234'
+      - 'AccountKey=base64dataWithoutQuotesHere=='
+    marker: '[SECRET]'
+    pattern: "(?:password|passwd|pwd|secret|api_?key|auth_?key|private_?key|access_?key|accountkey|sharedaccesssignature|sharedaccesskey)\\s*=\\s*[^;&\\s\"']{4,}"
+    caseSensitive: false
+
+  - name: azure_sas_token
+    description: 'Azure Shared Access Signature / Key (Service Bus, Event Hubs, Storage, Relay)'
+    examples:
+      - 'SharedAccessSignature=sv=2020-08-04&sig=abcdefg1234567890ABCDEFG'
+      - 'SharedAccessKey=base64encodedkeyvalue1234567890abcdef=='
+    marker: '[SECRET]'
+    pattern: "SharedAccess(?:Signature|Key)\\s*=\\s*[A-Za-z0-9%+/=_\\-]{16,}"
+    caseSensitive: false
+
+  # --- Data Masking (Presidio) ---
+
+  - name: iban
+    description: 'International Bank Account Number (validated with mod-97 checksum)'
+    examples:
+      - 'GB29NWBK60161331926819'
+      - 'IE29 AIBK 9311 5212 3456 78'
+    marker: '[IBAN]'
+    pattern: "\\b[A-Z]{2}\\d{2}\\s?[A-Za-z0-9]{4}(?:\\s?[A-Za-z0-9]{4}){1,7}(?:\\s?[A-Za-z0-9]{1,4})?\\b"
+    validation: iban_mod97
+
+  - name: aba_routing
+    description: 'ABA bank routing number (9 digits, validated with weighted mod-10 checksum)'
+    examples:
+      - '021000021'
+      - '111000025'
+    marker: '[ABA_ROUTING]'
+    pattern: "\\b[0-368]\\d{8}\\b"
+    validation: aba
+
+  - name: bitcoin_legacy
+    description: 'Bitcoin P2PKH/P2SH address (Base58Check validated)'
+    examples:
+      - '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa'
+      - '3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy'
+    marker: '[CRYPTO]'
+    pattern: "\\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\\b"
+    validation: base58check
+
+  - name: bitcoin_bech32
+    description: 'Bitcoin Bech32/Bech32m segwit address (BIP-173/350 polymod)'
+    examples:
+      - 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4'
+      - 'bc1pmfr3p9j00pfxjh0zmgp99y8zftmd3s5pmedqhyptwy6lm87hf5ss52r5n8'
+    marker: '[CRYPTO]'
+    pattern: "\\b(?:bc|tb)1[a-zA-HJ-NP-Z0-9]{25,87}\\b"
+    caseSensitive: false
+    validation: bech32
+
+  - name: ethereum_address
+    description: 'Ethereum address (EIP-55 case-mixing checksum)'
+    examples:
+      - '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'
+      - '0x52908400098527886E0F7030069857D2E4169EE7'
+    marker: '[CRYPTO]'
+    pattern: "\\b0[xX][0-9a-fA-F]{40}\\b"
+    validation: eip55
+
+  - name: us_passport
+    description: 'US passport number (8-9 digits, optional letter prefix)'
+    examples:
+      - 'C12345678'
+      - '456789012'
+    marker: '[US_PASSPORT]'
+    pattern: "\\b[A-Z]?\\d{8,9}\\b"
+
+  # IPv6 is listed before MAC so the full address is redacted first; otherwise the MAC
+  # regex would match 6-byte hex substrings of an IPv6 address with all-2-char hextets.
+  - name: ipv6
+    description: 'IPv6 address (full, compressed ::, and IPv4-mapped forms)'
+    examples:
+      - '2001:0db8:85a3:0000:0000:8a2e:0370:7334'
+      - '2001:db8:85a3::8a2e:370:7334'
+      - '::1'
+    # Order matters: Java regex alternation is leftmost-first, NOT longest-match.
+    # The middle-:: variants (n + :: + m) must come before the trailing-:: variant
+    # `(?:hextet:){1,7}:`, which would otherwise greedily eat e.g. `2001:db8:85a3::`
+    # and stop, leaving the rest of a compressed address unmatched.
+    marker: '[IP]'
+    pattern: '(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}|(?:[A-Fa-f0-9]{1,4}:){1,2}(?::[A-Fa-f0-9]{1,4}){1,5}|(?:[A-Fa-f0-9]{1,4}:){1,3}(?::[A-Fa-f0-9]{1,4}){1,4}|(?:[A-Fa-f0-9]{1,4}:){1,4}(?::[A-Fa-f0-9]{1,4}){1,3}|(?:[A-Fa-f0-9]{1,4}:){1,5}(?::[A-Fa-f0-9]{1,4}){1,2}|(?:[A-Fa-f0-9]{1,4}:){1,6}:[A-Fa-f0-9]{1,4}|[A-Fa-f0-9]{1,4}:(?::[A-Fa-f0-9]{1,4}){1,6}|:(?:(?::[A-Fa-f0-9]{1,4}){1,7}|:)|(?:[A-Fa-f0-9]{1,4}:){1,7}:'
+
+  - name: mac_address
+    description: 'Hardware MAC address (colon, dash, or dot notation)'
+    examples:
+      - '00:1A:2B:3C:4D:5E'
+      - '001A.2B3C.4D5E'
+    marker: '[MAC_ADDRESS]'
+    pattern: "\\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\\b|\\b[0-9A-Fa-f]{4}\\.[0-9A-Fa-f]{4}\\.[0-9A-Fa-f]{4}\\b"
+
+  # --- Data Masking ---
+
+  - name: email
+    description: 'Email address'
+    examples:
+      - 'john.doe@example.com'
+      - 'user+tag@company.co.uk'
+    marker: '[EMAIL]'
+    pattern: "\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b"
+
+  - name: ssn
+    description: 'US Social Security Number (excludes SSA-invalid area/group/serial)'
+    examples:
+      - '123-45-6789'
+      - '078-05-1120'
+    marker: '[SSN]'
+    pattern: "\\b(?!000|666|9\\d\\d)\\d{3}-(?!00)\\d{2}-(?!0000)\\d{4}\\b"
+
+  - name: credit_card
+    description: 'Credit card number (13-16 digits, validated with Luhn algorithm)'
+    examples:
+      - '4111 1111 1111 1111'
+      - '5500-0000-0000-0004'
+    marker: '[CREDIT_CARD]'
+    pattern: "\\b(?:\\d[ -]*?){13,16}\\b"
+    validation: credit_card
+
+  # Phone numbers are detected via Google's libphonenumber (PiiStringSanitizer.replacePhones).
+  # Default region is configurable via pii.default-phone-region (default: US).
+  # All E.164 (+CC...) numbers are detected regardless of region.
+
+  - name: ip
+    description: 'IPv4 address'
+    examples:
+      - '192.168.1.1'
+      - '10.0.0.254'
+    marker: '[IP]'
+    pattern: "\\b(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\b"
+
+  # Listed AFTER credit_card so 15-digit Amex cards are caught as [CREDIT_CARD] (the IIN
+  # check passes), not [IMEI] (which would Luhn-validate them too).
+  - name: imei
+    description: 'IMEI device identifier (15 digits, Luhn-validated)'
+    examples:
+      - '490154203237518'
+      - '356938035643809'
+    marker: '[IMEI]'
+    pattern: "\\b\\d{15}\\b"
+    validation: luhn
+
+  - name: canadian_sin
+    description: 'Canadian Social Insurance Number (Luhn-validated, dashed form)'
+    examples:
+      - '046-454-286'
+      - '123 456 782'
+    marker: '[SIN]'
+    pattern: "\\b\\d{3}[-\\s]\\d{3}[-\\s]\\d{3}\\b"
+    validation: luhn

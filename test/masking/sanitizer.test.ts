@@ -17,7 +17,9 @@ describe('Sanitizer with bundled defaults', () => {
   });
 
   it('redacts secrets like OpenAI keys', () => {
-    const out = sanitizer.sanitize('key: sk-proj-abc123def456ghi789jklmnopqrstuvwx');
+    // Synthetic, zero-entropy fixture — chosen to (a) match the openai_key rule
+    // `sk-[A-Za-z0-9\-_]*[A-Za-z0-9]{20,}` and (b) not trip secret-scanners.
+    const out = sanitizer.sanitize('key: sk-AAAAAAAAAAAAAAAAAAAA');
     assert.equal(out, 'key: [SECRET]');
   });
 
@@ -49,16 +51,20 @@ describe('Sanitizer with bundled defaults', () => {
   });
 
   it('walks structured values via sanitizeUnknown', () => {
+    // Field name is `value`, not `secret`/`apiKey`/`password`, and the literal
+    // is a zero-entropy synthetic fixture — both choices avoid tripping
+    // secret-scanners on this test file. The openai_key sanitizer rule still
+    // fires because it matches on the value's shape, not the field name.
     const input = {
       role: 'user',
       content: 'reach me at john@example.com',
-      meta: ['nothing', { secret: 'sk-proj-abc123def456ghi789jklmnopqrstuvwx' }],
+      meta: ['nothing', { value: 'sk-AAAAAAAAAAAAAAAAAAAA' }],
       n: 42,
       flag: true,
     };
     const out = sanitizer.sanitizeUnknown(input) as typeof input;
     assert.equal(out.content, 'reach me at [EMAIL]');
-    assert.deepEqual((out.meta as [string, { secret: string }])[1], { secret: '[SECRET]' });
+    assert.deepEqual((out.meta as [string, { value: string }])[1], { value: '[SECRET]' });
     assert.equal(out.n, 42);
     assert.equal(out.flag, true);
   });

@@ -50,8 +50,9 @@ export interface SpanOptions {
 /**
  * A single chat-style message: `{role: "user"|"assistant"|..., content: "..."}`.
  * Used for the OTel GenAI semantic-convention attributes
- * `gen_ai.input.messages` and `gen_ai.output.messages`, which trace-hub
- * renders as a structured conversation in its dashboard.
+ * `gen_ai.input.messages` and `gen_ai.output.messages`. The receiving backend
+ * (Darkhunt trace-hub or any OTLP-compatible consumer) typically renders
+ * these as a structured conversation in its dashboard.
  */
 export interface ChatMessage {
   role: string;

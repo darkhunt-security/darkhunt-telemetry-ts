@@ -41,7 +41,7 @@ export class DarkhuntSpanExporter implements SpanExporter {
   private readonly droppedWarned = new Set<string>();
 
   constructor(options: DarkhuntSpanExporterOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+    this.baseUrl = stripTrailingSlashes(options.baseUrl);
     this.apiKey = options.apiKey;
     this.timeoutMs = options.timeoutMs;
     this.internal = options.internal ?? false;
@@ -61,7 +61,15 @@ export class DarkhuntSpanExporter implements SpanExporter {
     this.shutdownCalled = true;
   }
 
-  async forceFlush(): Promise<void> {}
+  /**
+   * No-op: this exporter has no internal buffer. The {@code BatchSpanProcessor}
+   * upstream already calls {@link export} synchronously when it flushes, so by
+   * the time forceFlush returns there's nothing for us to drain.
+   * Required by the {@code SpanExporter} interface.
+   */
+  async forceFlush(): Promise<void> {
+    return;
+  }
 
   /**
    * Log a one-line warning when a span is dropped for missing routing fields.
@@ -82,52 +90,74 @@ export class DarkhuntSpanExporter implements SpanExporter {
   }
 
   private async exportAsync(spans: ReadableSpan[]): Promise<ExportResult> {
-    const groups = new Map<string, { route: RouteKey; spans: ReadableSpan[] }>();
-
-    for (const span of spans) {
-      const a = span.attributes;
-      const tenantId = stringAttr(a[ATTR.TENANT_ID]);
-      const workspaceId = stringAttr(a[ATTR.WORKSPACE_ID]);
-      const applicationId = stringAttr(a[ATTR.APPLICATION_ID]);
-      const assessmentRunId = stringAttr(a[ATTR.ASSESSMENT_RUN_ID]);
-      if (!tenantId || !workspaceId || !applicationId || !assessmentRunId) {
-        const missing: string[] = [];
-        if (!tenantId) missing.push('tenantId');
-        if (!workspaceId) missing.push('workspaceId');
-        if (!applicationId) missing.push('applicationId');
-        if (!assessmentRunId) missing.push('assessmentRunId');
-        this.warnDroppedSpan(span.name, missing);
-        continue;
-      }
-      const key = `${tenantId}|${workspaceId}|${applicationId}|${assessmentRunId}`;
-      let entry = groups.get(key);
-      if (!entry) {
-        entry = {
-          route: { tenantId, workspaceId, applicationId, assessmentRunId },
-          spans: [],
-        };
-        groups.set(key, entry);
-      }
-      entry.spans.push(span);
-    }
-
+    const groups = this.groupByRoute(spans);
     if (groups.size === 0) {
       return { code: ExportResultCode.SUCCESS };
     }
 
     let failed = false;
     for (const { route, spans: group } of groups.values()) {
-      const body = ProtobufTraceSerializer.serializeRequest(group);
-      if (!body) {
-        continue;
-      }
-      const pathPrefix = this.internal ? 'internal' : 'otlp';
-      const url = `${this.baseUrl}/${pathPrefix}/t/${encodeURIComponent(route.tenantId)}/v1/traces`;
-      const ok = await this.sendWithRetry(url, body, route);
+      const ok = await this.exportGroup(route, group);
       if (!ok) failed = true;
     }
-
     return { code: failed ? ExportResultCode.FAILED : ExportResultCode.SUCCESS };
+  }
+
+  /**
+   * Bucket spans by their (tenant, workspace, application, assessmentRun) tuple
+   * so each bucket can be POSTed to its own tenant-scoped endpoint. Spans
+   * missing any of the four routing attributes are logged and dropped.
+   */
+  private groupByRoute(
+    spans: ReadableSpan[]
+  ): Map<string, { route: RouteKey; spans: ReadableSpan[] }> {
+    const groups = new Map<string, { route: RouteKey; spans: ReadableSpan[] }>();
+    for (const span of spans) {
+      const route = this.extractRoute(span);
+      if (!route) continue;
+      const key = `${route.tenantId}|${route.workspaceId}|${route.applicationId}|${route.assessmentRunId}`;
+      let entry = groups.get(key);
+      if (!entry) {
+        entry = { route, spans: [] };
+        groups.set(key, entry);
+      }
+      entry.spans.push(span);
+    }
+    return groups;
+  }
+
+  /**
+   * Pull the four routing attributes off a span. Returns null and logs a
+   * deduped warning when any attribute is missing.
+   */
+  private extractRoute(span: ReadableSpan): RouteKey | null {
+    const a = span.attributes;
+    const tenantId = stringAttr(a[ATTR.TENANT_ID]);
+    const workspaceId = stringAttr(a[ATTR.WORKSPACE_ID]);
+    const applicationId = stringAttr(a[ATTR.APPLICATION_ID]);
+    const assessmentRunId = stringAttr(a[ATTR.ASSESSMENT_RUN_ID]);
+    if (tenantId && workspaceId && applicationId && assessmentRunId) {
+      return { tenantId, workspaceId, applicationId, assessmentRunId };
+    }
+    const missing: string[] = [];
+    if (!tenantId) missing.push('tenantId');
+    if (!workspaceId) missing.push('workspaceId');
+    if (!applicationId) missing.push('applicationId');
+    if (!assessmentRunId) missing.push('assessmentRunId');
+    this.warnDroppedSpan(span.name, missing);
+    return null;
+  }
+
+  /** Serialize one route's spans and POST them. */
+  private async exportGroup(route: RouteKey, spans: ReadableSpan[]): Promise<boolean> {
+    const body = ProtobufTraceSerializer.serializeRequest(spans);
+    if (!body) return true;
+    return this.sendWithRetry(this.buildUrl(route), body, route);
+  }
+
+  private buildUrl(route: RouteKey): string {
+    const pathPrefix = this.internal ? 'internal' : 'otlp';
+    return `${this.baseUrl}/${pathPrefix}/t/${encodeURIComponent(route.tenantId)}/v1/traces`;
   }
 
   private async sendWithRetry(url: string, body: Uint8Array, route: RouteKey): Promise<boolean> {
@@ -166,6 +196,18 @@ export class DarkhuntSpanExporter implements SpanExporter {
 
 function stringAttr(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+/**
+ * Trim every trailing `/` from the URL. Plain string ops instead of a regex
+ * so static analyzers don't flag the call as a potential ReDoS vector
+ * (the equivalent regex `/\/+$/` is in fact linear, but Sonar/CodeQL
+ * conservatively warn on any quantifier in a constructor input).
+ */
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 47 /* '/' */) end--;
+  return end === url.length ? url : url.slice(0, end);
 }
 
 function sleep(ms: number): Promise<void> {

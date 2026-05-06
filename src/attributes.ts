@@ -7,11 +7,10 @@ export const ATTR = {
   VERSION: 'darkhunt.version',
   /**
    * Prefix for freeform metadata. Each entry is emitted as its own OTLP
-   * attribute keyed `darkhunt.observation.metadata.<userKey>`, matching the
-   * `metadataPrefix` declared in trace-hub's `mappings/darkhunt.yaml`. The
-   * consumer iterates attributes by prefix and strips it back off, so each
-   * entry must live in its own attribute — a single JSON-blob attribute
-   * gets dropped on ingest.
+   * attribute keyed `darkhunt.observation.metadata.<userKey>`. The receiving
+   * backend iterates attributes by this prefix and strips it back off, so
+   * each entry must live in its own attribute — a single JSON-blob attribute
+   * is not iterable that way and gets dropped on ingest.
    */
   METADATA_PREFIX: 'darkhunt.observation.metadata.',
   TENANT_ID: 'darkhunt.tenant_id',

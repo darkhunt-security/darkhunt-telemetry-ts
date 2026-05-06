@@ -1,18 +1,38 @@
 {
   "name": "@darkhunt-security/telemetry",
   "version": "0.5.0",
+  "description": "OpenTelemetry-based SDK for sending LLM traces, generations, and observations to any OTLP-compatible backend (default: Darkhunt trace-hub). Includes built-in client-side data masking.",
   "type": "module",
+  "license": "Apache-2.0",
+  "author": "Darkhunt Security, Inc.",
+  "homepage": "https://github.com/darkhunt-security/darkhunt-telemetry-ts#readme",
+  "bugs": {
+    "url": "https://github.com/darkhunt-security/darkhunt-telemetry-ts/issues"
+  },
+  "keywords": [
+    "opentelemetry",
+    "otel",
+    "otlp",
+    "llm",
+    "observability",
+    "tracing",
+    "data-masking",
+    "pii"
+  ],
   "engines": {
     "node": "^24.4.1"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist/"
+    "dist/",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
   ],
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com",
-    "access": "restricted"
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   },
   "repository": {
     "type": "git",
@@ -20,16 +40,18 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "prepare": "tsx scripts/generate-rules-json.ts",
+    "prebuild": "tsx scripts/generate-rules-json.ts",
     "build": "tsc",
     "prepublishOnly": "npm run build",
+    "pretypecheck": "tsx scripts/generate-rules-json.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test 'test/**/*.test.ts'",
+    "test": "tsx scripts/generate-rules-json.ts && node --import tsx --test 'test/**/*.test.ts'",
     "lint": "eslint",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "@darkhunt-security/masking-schema": "^2026.5.6-build.291",
     "@noble/hashes": "^1.8.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/otlp-transformer": "^0.214.0",
@@ -47,6 +69,7 @@
     "prettier": "^3.8.0",
     "tsx": "^4.19.0",
     "typescript": "^5.9.0",
-    "typescript-eslint": "^8.0.0"
+    "typescript-eslint": "^8.0.0",
+    "yaml": "^2.8.4"
   }
 }

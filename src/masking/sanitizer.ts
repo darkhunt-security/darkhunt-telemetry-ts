@@ -1,6 +1,10 @@
-import { loadDefaults } from '@darkhunt-security/masking-schema';
-import type { MaskingRule, MaskingRulesFile } from '@darkhunt-security/masking-schema';
+import bundledRules from './rules/rules.json' with { type: 'json' };
+import type { MaskingRule, MaskingRulesFile } from './rules/types.js';
 import { VALIDATORS, type Validator } from './validators/index.js';
+
+function loadDefaults(): MaskingRulesFile {
+  return bundledRules as MaskingRulesFile;
+}
 
 /**
  * Operator-defined extra masking rule, merged on top of the bundled defaults.
@@ -44,7 +48,6 @@ function compileRules(
       if (!validator) {
         // Fail-closed: unknown validators mean we can't enforce the rule
         // safely (regex alone over-matches). Drop and warn.
-        // eslint-disable-next-line no-console
         console.warn(
           `[darkhunt-telemetry] Skipping masking rule "${rule.name}": ` +
             `validator "${rule.validation}" is not implemented in this SDK version. ` +
@@ -84,12 +87,13 @@ export class Sanitizer {
   readonly rulesetVersion: string;
 
   /**
-   * @param rulesFile Defaults to the version bundled with the installed
-   *                  {@code @darkhunt-security/masking-schema} package.
+   * @param rulesFile Defaults to the YAML ruleset vendored under
+   *                  {@code src/masking/rules/data-masking-rules.yaml} and
+   *                  parsed at SDK build time into {@code rules.json}.
    * @param customPatterns Operator-defined extras appended after the defaults.
    */
   constructor(rulesFile?: MaskingRulesFile, customPatterns: readonly CustomPattern[] = []) {
-    const file = rulesFile ?? (loadDefaults() as MaskingRulesFile);
+    const file = rulesFile ?? loadDefaults();
     this.rulesetVersion = file.version;
     this.rules = compileRules(file.rules, customPatterns);
   }
