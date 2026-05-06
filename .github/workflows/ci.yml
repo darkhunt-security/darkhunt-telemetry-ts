@@ -130,10 +130,9 @@ jobs:
       - name: Notify Slack
         uses: slackapi/slack-github-action@af78098f536edbc4de71162a307590698245be95 # v3.0.1
         with:
-          method: chat.postMessage
-          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          webhook: ${{ secrets.SLACK_WEBHOOK_RELEASES }}
+          webhook-type: incoming-webhook
           payload: |
-            channel: "C09925W0X8Q"
             text: "*${{ github.event.repository.name }}* released `${{ steps.version.outputs.version }}`\n
             • Commit: <${{ github.event.head_commit.url }}|${{ github.event.head_commit.message }}>\n
             • Published by: ${{ github.actor }}"
