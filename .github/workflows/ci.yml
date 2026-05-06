@@ -63,18 +63,13 @@ jobs:
       - name: SonarCloud scan
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6.0.0
         env:
-          # GITHUB_TOKEN is needed for PR decoration (annotates PRs with issues)
+          # GITHUB_TOKEN is needed for PR decoration (annotates PRs with issues).
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # SONAR_TOKEN must be added to repo Secrets — generate at
-          # https://sonarcloud.io/account/security under "Tokens"
+          # SONAR_TOKEN is the only Sonar secret this workflow needs — generate
+          # one at https://sonarcloud.io/account/security and add it as a repo
+          # secret. Project key + org are committed in sonar-project.properties
+          # (they're public info).
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        with:
-          # Project + org keys come from org-level secrets (same convention as
-          # workflow-manager). Avoids hardcoding values that vary per environment.
-          args: >
-            -Dsonar.projectKey=${{ secrets.SONAR_PREFIX_ORGANIZATION }}_${{ github.event.repository.name }}
-            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
-            -Dsonar.host.url=https://sonarcloud.io
 
   publish:
     needs: lint
