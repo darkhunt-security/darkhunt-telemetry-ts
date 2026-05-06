@@ -51,6 +51,19 @@ Key shapes:
 
 ### 1. Install + pin
 
+**Preflight check before installing.** The SDK is ESM-only and requires
+Node 24+. Before adding the dependency, verify the target project:
+
+- `package.json` has `"type": "module"` (or the project is otherwise ESM,
+  e.g. via `.mts` files). If the project is CommonJS, stop and tell the
+  user the SDK won't `require()` cleanly — they need to migrate to ESM or
+  use dynamic `import()` from a CJS wrapper, neither of which the agent
+  should do silently.
+- `package.json` `engines.node` (or the project's CI matrix) is on Node 24+.
+  If the project pins an older Node, flag it and ask before bumping.
+
+Once both check out:
+
 ```bash
 npm install @darkhunt-security/telemetry
 ```

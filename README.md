@@ -10,17 +10,21 @@
 
 TypeScript SDK for sending LLM traces, generations, and observations to the [Darkhunt platform](https://darkhunt.ai) for persistence and security data enrichment. Built on OpenTelemetry primitives, with built-in client-side data masking that redacts secrets and PII before payloads leave the process.
 
-> 🤖 **Skip the manual wiring** — if you use Claude Code, tell it _"add Darkhunt telemetry to this service"_ and the [`darkhunt-telemetry-integration`](./.claude/skills/darkhunt-telemetry-integration/SKILL.md) skill auto-invokes and does steps 1–4 below for you.
+> 🤖 **Skip the manual wiring** — if you use Claude Code, tell it _"add Darkhunt telemetry to this service"_ and the [`darkhunt-telemetry-integration`](https://github.com/darkhunt-security/darkhunt-telemetry-ts/blob/main/.claude/skills/darkhunt-telemetry-integration/SKILL.md) skill auto-invokes and does steps 1–5 below for you.
 
 ---
 
-## Integrate in 4 steps
+## Get started
+
+**Prerequisite — set up your project in Darkhunt.** Open the [Get started page](https://app.darkhunt.ai/get-started?flow=tool) in the Darkhunt dashboard to copy your `tenantId`, `workspaceId`, and `applicationId`, then create an API key (`dh-...`) by following [Creating an API key](https://docs.darkhunt.ai/darkhunt-ai-security/api-keys#creating-an-api-key). Step 2 reads all four values from env vars: `DH_TENANT_ID`, `DH_WORKSPACE_ID`, `DH_APPLICATION_ID`, `DH_API_KEY`.
 
 ### 1. Install
 
 ```bash
 npm install @darkhunt-security/telemetry
 ```
+
+> Requires Node 24+ and an ESM project (`"type": "module"` in `package.json`). For CommonJS consumers, use dynamic `import()` or migrate to ESM.
 
 ### 2. Create a singleton module
 
@@ -36,7 +40,6 @@ export const dh = new DarkhuntTelemetry({
   tenantId: process.env.DH_TENANT_ID,
   workspaceId: process.env.DH_WORKSPACE_ID,
   applicationId: process.env.DH_APPLICATION_ID,
-  environment: process.env.NODE_ENV,
 });
 ```
 
@@ -85,7 +88,10 @@ The three _routing fields_ — `tenantId`, `workspaceId`, `applicationId` — ar
 > - **Visualization** — traces sharing a `sessionId` render as one conversation timeline in the dashboard. Without it, every turn of a multi-turn chat appears as a disconnected trace and the conversation view is unusable.
 > - **Guardrails & anomaly detection** — Darkhunt's policies key off `userId` to attribute behavior to a specific end-user (rate limits, abuse detection, per-user policy decisions). Without it, guardrails can only operate at the application level and lose the per-user signal.
 >
-> Use whatever stable identifier you have — a session cookie, a request-scoped UUID, the authenticated user's email or ID. Don't leave them blank.
+> Pick the right identifier for each:
+>
+> - **`sessionId`** — the _same_ value across every turn of one logical conversation. A browser session cookie, a chat thread ID, a conversation UUID created at session start. **Not** a fresh-per-request UUID — that fragments the conversation into one-trace "sessions" and defeats the purpose.
+> - **`userId`** — stable per end-user. The authenticated account ID, email, or auth subject claim. Stays the same across sessions for the same person.
 
 ### 4. Drain the buffer on shutdown
 
@@ -108,15 +114,21 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
 
 For one-shot scripts (CLI tools, cron jobs), `await dh.flush()` before returning is enough — the auto-registered `beforeExit` hook handles teardown.
 
+### 5. Verify it worked
+
+Run your service, exercise the path that opens a trace, then open **[app.darkhunt.ai/tracing](https://app.darkhunt.ai/tracing)** — incoming traces appear in the timeline. The default flush interval is `5s`, so wait a few seconds (or trigger graceful shutdown) if you don't see them immediately.
+
+If nothing shows up, the most common causes are: missing `DH_API_KEY` in the runtime env, wrong `tenantId` / `workspaceId` / `applicationId` (data lands in the wrong scope), or the process killed with `SIGKILL` before the buffer flushed.
+
 ---
 
 ## Common patterns
 
-| If you're building...    | You'll want...                                                                                                |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| **Multi-turn chat**      | One trace per session, one `generation()` per turn — keeps the conversation rendered as a single timeline      |
-| **Streaming responses**  | Set `completionStartTime` via `gen.update()` when the first token arrives — backend splits TTFT vs stream time |
-| **Multi-tenant routing** | Leave routing fields off the client, pass them per-trace from the request context                              |
+| If you're building...    | You'll want...                                                                                                   |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| **Multi-turn chat**      | One trace per session, one `generation()` per turn — keeps the conversation rendered as a single timeline        |
+| **Streaming responses**  | Set `completionStartTime` via `gen.update()` when the first token arrives — backend splits TTFT vs stream time   |
+| **Multi-tenant routing** | Leave routing fields off the client, pass them per-trace from the request context                                |
 | **Recording errors**     | Pass `level: 'ERROR'` and `statusMessage` to `gen.end()` — the dashboard surfaces failures and reliability stats |
 
 Worked examples for each: [full SDK guide](https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript#examples).
