@@ -34,7 +34,7 @@ Darkhunt-specific span exporter built on OpenTelemetry primitives
 — traces, LLM generations, tool calls, retrievals, guardrails — to Darkhunt
 trace-hub. Routing semantics (`tenantId` / `workspaceId` / `applicationId`)
 and the attribute schema are Darkhunt-specific; trace-hub is the only intended
-receiver. Built-in client-side data masking redacts ~60 secret/PII patterns
+receiver. Built-in client-side data masking redacts 66 secret/PII patterns
 before payloads leave the process.
 
 Key shapes:
