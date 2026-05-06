@@ -224,6 +224,34 @@ production tracing should omit it. When set, it's emitted as
 `darkhunt.assessment_run_id` and read by trace-hub for grouping inside the
 assessment dashboards.
 
+## sessionId and userId — set them every time
+
+Routing fields are required; `sessionId` and `userId` are technically
+optional but **every integration should set them**. They unlock the two
+features customers actually buy the platform for:
+
+- **Conversation visualization** — the dashboard groups traces sharing a
+  `sessionId` into one timeline. A chatbot that doesn't set it shows up as
+  N disconnected traces instead of one conversation.
+- **Guardrails / anomaly detection** — Darkhunt's policy engine keys off
+  `userId` for per-user rate limits, abuse signals, and policy decisions.
+  Without it, the only available scope is per-application — much coarser.
+
+When wiring a service, look for the stable identifiers already in scope and
+plumb them through. Examples from real integrations:
+
+- **Express / HTTP handlers** — `req.session?.id` (or signed cookie) →
+  `sessionId`; `req.user?.id` or `req.user?.email` → `userId`.
+- **Worker / queue jobs** — the job/correlation ID → `sessionId`; the
+  invoking customer/account ID → `userId`.
+- **`attack-discovery` pattern** — both fields set to `ctx.assessmentRunId`
+  / `'darkhunt'` so every turn of one assessment lands in the same timeline
+  attributed to the synthetic operator.
+
+If these aren't known at trace open (auth happens mid-flow), open the trace
+anyway and call `trace.update({ userId, sessionId })` once they're known —
+all spans created after the update inherit the values.
+
 ## In-cluster vs public ingest
 
 | Caller location               | `internal`        | Auth                                   | URL pattern                                      |

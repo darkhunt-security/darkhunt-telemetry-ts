@@ -8,9 +8,9 @@
 [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=darkhunt-security_darkhunt-telemetry-ts&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=darkhunt-security_darkhunt-telemetry-ts)
 [![Known Vulnerabilities](https://snyk.io/test/github/darkhunt-security/darkhunt-telemetry-ts/badge.svg)](https://snyk.io/test/github/darkhunt-security/darkhunt-telemetry-ts)
 
-TypeScript SDK for shipping LLM traces, generations, and observations to [Darkhunt trace-hub](https://darkhunt.ai). Built on OpenTelemetry primitives, with built-in client-side data masking that redacts secrets and PII before payloads leave the process.
+TypeScript SDK for sending LLM traces, generations, and observations to the [Darkhunt platform](https://darkhunt.ai) for persistence and security data enrichment. Built on OpenTelemetry primitives, with built-in client-side data masking that redacts secrets and PII before payloads leave the process.
 
-> 🤖 **Skip the manual wiring** — if you use [Claude Code](https://claude.com/claude-code), tell it _"add Darkhunt telemetry to this service"_ and the [`darkhunt-telemetry-integration`](https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript) skill auto-invokes and does steps 1–4 below for you.
+> 🤖 **Skip the manual wiring** — if you use Claude Code, tell it _"add Darkhunt telemetry to this service"_ and the [`darkhunt-telemetry-integration`](./.claude/skills/darkhunt-telemetry-integration/SKILL.md) skill auto-invokes and does steps 1–4 below for you.
 
 ---
 
@@ -44,11 +44,10 @@ Import `dh` wherever you need to open a trace. Don't `new DarkhuntTelemetry()` a
 
 ### 3. Wrap your LLM calls
 
-The SDK has three concepts you'll use:
+The SDK has two concepts you'll use:
 
 - **`trace`** — one user-facing operation (a request, a chat session, a job). Open it at the entry point.
 - **`generation`** — one LLM call inside a trace. Records model, input, output, token usage, cost.
-- **`span`** — anything else inside a trace (retrieval, tool calls, guardrails, etc.). Categorize via `observationType`.
 
 ```ts
 // src/handlers/chat.ts
@@ -79,11 +78,18 @@ export async function handleChat(req, res) {
 }
 ```
 
-The three _routing fields_ — `tenantId`, `workspaceId`, `applicationId` — are how trace-hub partitions data. They're set once on the client in step 2 and inherited by every trace. If any is missing when `dh.trace()` is called, it throws — fail-fast is the design. Per-trace fields like `name`, `sessionId`, and `userId` are optional metadata for filtering in the dashboard.
+The three _routing fields_ — `tenantId`, `workspaceId`, `applicationId` — are how the platform partitions data. They're set once on the client in step 2 and inherited by every trace. If any is missing when `dh.trace()` is called, it throws — fail-fast is the design.
+
+> **⚠️ Set `sessionId` and `userId` on every trace.** They're not technically required (the SDK won't throw without them), but the platform's two main value-adds depend on them:
+>
+> - **Visualization** — traces sharing a `sessionId` render as one conversation timeline in the dashboard. Without it, every turn of a multi-turn chat appears as a disconnected trace and the conversation view is unusable.
+> - **Guardrails & anomaly detection** — Darkhunt's policies key off `userId` to attribute behavior to a specific end-user (rate limits, abuse detection, per-user policy decisions). Without it, guardrails can only operate at the application level and lose the per-user signal.
+>
+> Use whatever stable identifier you have — a session cookie, a request-scoped UUID, the authenticated user's email or ID. Don't leave them blank.
 
 ### 4. Drain the buffer on shutdown
 
-Spans are batched in memory and exported asynchronously. If your process exits with a full buffer, those spans are lost. The constructor handles natural process exit automatically, but **long-running servers must wire up signal handlers**:
+Telemetry is batched in memory and exported asynchronously. If your process exits with a full buffer, those traces are lost. The constructor handles natural process exit automatically, but **long-running servers must wire up signal handlers**:
 
 ```ts
 // src/index.ts
@@ -106,16 +112,14 @@ For one-shot scripts (CLI tools, cron jobs), `await dh.flush()` before returning
 
 ## Common patterns
 
-| If you're building...    | You'll want...                                                                                                           |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| **Multi-turn chat**      | One trace per session, one `generation()` per turn — keeps the conversation rendered as a single timeline                |
-| **RAG pipeline**         | A `retriever` span around the vector search + a `generation` for the answer — so latency splits cleanly                  |
-| **Tool-using agent**     | Nested spans: `trace.generation()` for the LLM turn, `parent.span(name, { observationType: 'tool' })` for each tool call |
-| **Streaming responses**  | Set `completionStartTime` via `gen.update()` when the first token arrives — backend splits TTFT vs stream time           |
-| **Guarded inputs**       | A `guardrail` span before the model call, tag the trace `'blocked'` if the verdict is reject                             |
-| **Multi-tenant routing** | Leave routing fields off the client, pass them per-trace from the request context                                        |
+| If you're building...    | You'll want...                                                                                                |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| **Multi-turn chat**      | One trace per session, one `generation()` per turn — keeps the conversation rendered as a single timeline      |
+| **Streaming responses**  | Set `completionStartTime` via `gen.update()` when the first token arrives — backend splits TTFT vs stream time |
+| **Multi-tenant routing** | Leave routing fields off the client, pass them per-trace from the request context                              |
+| **Recording errors**     | Pass `level: 'ERROR'` and `statusMessage` to `gen.end()` — the dashboard surfaces failures and reliability stats |
 
-Each has a worked example in the [full SDK guide](https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript#examples).
+Worked examples for each: [full SDK guide](https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript#examples).
 
 ## Configuration
 
@@ -126,7 +130,7 @@ Every option resolves as **constructor argument > env var > default**. The most 
 | `apiKey`          | `DARKHUNT_API_KEY`        | _(required)_              |
 | `baseUrl`         | `DARKHUNT_BASE_URL`       | `https://app.darkhunt.ai` |
 | `enabled`         | `DARKHUNT_ENABLED`        | `true`                    |
-| `flushAt`         | `DARKHUNT_FLUSH_AT`       | `20` spans                |
+| `flushAt`         | `DARKHUNT_FLUSH_AT`       | `20` records              |
 | `flushIntervalMs` | `DARKHUNT_FLUSH_INTERVAL` | `5s`                      |
 | `mask.enabled`    | —                         | `true`                    |
 
@@ -134,7 +138,7 @@ Full table, all routing-field env vars, and per-option behavior: [docs.darkhunt.
 
 ## Data masking (default-on)
 
-The SDK redacts secrets and PII _before_ spans leave your process — 66 rules covering AWS/OpenAI/Stripe/GitHub-shape API keys, JWTs, PEM blocks, emails, credit cards (Luhn-validated), IBANs (mod-97), crypto addresses (Base58Check / EIP-55), and more. Server-side masking runs again as defense-in-depth.
+The SDK redacts secrets and PII _before_ data leaves your process — 66 rules covering AWS/OpenAI/Stripe/GitHub-shape API keys, JWTs, PEM blocks, emails, credit cards (Luhn-validated), IBANs (mod-97), crypto addresses (Base58Check / EIP-55), and more. Server-side masking runs again as defense-in-depth.
 
 ```ts
 // Add site-specific patterns on top of the defaults:
@@ -150,7 +154,7 @@ Full ruleset, validators, and the phone-number rationale: [docs.darkhunt.ai/dark
 ## Documentation
 
 - **[Full SDK guide](https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript)** — configuration, lifecycle, API reference, 8 worked examples, architecture, masking ruleset
-- [Tracing dashboard](https://docs.darkhunt.ai/darkhunt-ai-security/tracing) — what the spans you ship look like in the Darkhunt UI
+- [Tracing dashboard](https://docs.darkhunt.ai/darkhunt-ai-security/tracing) — what the traces you ship look like in the Darkhunt UI
 
 ## Development
 
