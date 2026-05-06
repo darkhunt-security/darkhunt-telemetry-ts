@@ -10,6 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Sonar needs full git history for blame / change-window analysis.
+          # Shallow clone (the default) makes Sonar warn and disables some checks.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -27,6 +31,25 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
+
+      - name: Tests with coverage
+        run: npm run test:coverage
+
+      - name: SonarCloud scan
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          # GITHUB_TOKEN is needed for PR decoration (annotates PRs with issues)
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # SONAR_TOKEN must be added to repo Secrets — generate at
+          # https://sonarcloud.io/account/security under "Tokens"
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          # Project + org keys come from org-level secrets (same convention as
+          # workflow-manager). Avoids hardcoding values that vary per environment.
+          args: >
+            -Dsonar.projectKey=${{ secrets.SONAR_PREFIX_ORGANIZATION }}_${{ github.event.repository.name }}
+            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
+            -Dsonar.host.url=https://sonarcloud.io
 
   publish:
     needs: lint

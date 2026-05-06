@@ -1,5 +1,7 @@
 node_modules/
 dist/
+coverage/
+.nyc_output/
 *.tsbuildinfo
 *.log
 .DS_Store
