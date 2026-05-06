@@ -84,9 +84,9 @@ export class DarkhuntSpanExporter implements SpanExporter {
     diag.warn(
       `DarkhuntSpanExporter: dropping span "${spanName}" — missing required ` +
         `routing attribute(s): ${missing.join(', ')}. The exporter requires ` +
-        `tenantId, workspaceId, applicationId, and assessmentRunId on every ` +
-        `trace; spans without all four cannot be routed and are silently ` +
-        `discarded. Verify the caller passed them to client.trace({...}).`
+        `tenantId, workspaceId, and applicationId on every trace; spans ` +
+        `without all three cannot be routed and are silently discarded. ` +
+        `Verify the caller passed them to client.trace({...}).`
     );
   }
 
@@ -107,7 +107,8 @@ export class DarkhuntSpanExporter implements SpanExporter {
   /**
    * Bucket spans by their (tenant, workspace, application, assessmentRun) tuple
    * so each bucket can be POSTed to its own tenant-scoped endpoint. Spans
-   * missing any of the four routing attributes are logged and dropped.
+   * missing tenant/workspace/application are logged and dropped;
+   * assessmentRunId is optional and defaults to '' for batching.
    */
   private groupByRoute(
     spans: ReadableSpan[]
@@ -128,8 +129,10 @@ export class DarkhuntSpanExporter implements SpanExporter {
   }
 
   /**
-   * Pull the four routing attributes off a span. Returns null and logs a
-   * deduped warning when any attribute is missing.
+   * Pull the routing attributes off a span. tenantId, workspaceId, and
+   * applicationId are required — missing any drops the span with a deduped
+   * warning. assessmentRunId is optional and used only by Darkhunt assessment
+   * workflows; absent values become '' for batching purposes.
    */
   private extractRoute(span: ReadableSpan): RouteKey | null {
     const a = span.attributes;
@@ -137,14 +140,13 @@ export class DarkhuntSpanExporter implements SpanExporter {
     const workspaceId = stringAttr(a[ATTR.WORKSPACE_ID]);
     const applicationId = stringAttr(a[ATTR.APPLICATION_ID]);
     const assessmentRunId = stringAttr(a[ATTR.ASSESSMENT_RUN_ID]);
-    if (tenantId && workspaceId && applicationId && assessmentRunId) {
+    if (tenantId && workspaceId && applicationId) {
       return { tenantId, workspaceId, applicationId, assessmentRunId };
     }
     const missing: string[] = [];
     if (!tenantId) missing.push('tenantId');
     if (!workspaceId) missing.push('workspaceId');
     if (!applicationId) missing.push('applicationId');
-    if (!assessmentRunId) missing.push('assessmentRunId');
     this.warnDroppedSpan(span.name, missing);
     return null;
   }

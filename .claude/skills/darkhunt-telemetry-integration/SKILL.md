@@ -5,8 +5,9 @@ description: |
   trace-hub TypeScript SDK at /Users/sergey/proj/darkhunt/darkhunt-telemetry-ts)
   into a Node.js / TypeScript service. Covers: install, singleton client setup,
   trace + generation + span emission, backdated `startTime`, graceful shutdown,
-  routing-field discipline (tenantId / workspaceId / applicationId /
-  assessmentRunId), in-cluster vs public ingest paths, and the masking layer.
+  routing-field discipline (tenantId / workspaceId / applicationId), in-cluster
+  vs public ingest paths, the masking layer, and the canonical
+  SDK-field-to-trace-hub mapping (what attributes the backend actually reads).
   Auto-invoke when the user asks about adding LLM tracing, sending spans to
   trace-hub, integrating Darkhunt observability, or wiring DarkhuntTelemetry /
   `client.trace()` / `trace.generation()` calls into a service.
@@ -28,17 +29,19 @@ time-to-first-token, custom masking patterns).
 
 ## What the SDK is
 
-OpenTelemetry-based span exporter that sends spans (traces, LLM generations,
-tool calls, retrievals, guardrails) to any OTLP-compatible receiver — Darkhunt
-trace-hub by default, but vanilla OTLP/protobuf so it talks to any backend.
-Built-in client-side data masking redacts ~60 secret/PII patterns before
-payloads leave the process.
+Darkhunt-specific span exporter built on OpenTelemetry primitives
+(TracerProvider, BatchSpanProcessor, OTLP/protobuf transport) that ships spans
+— traces, LLM generations, tool calls, retrievals, guardrails — to Darkhunt
+trace-hub. Routing semantics (`tenantId` / `workspaceId` / `applicationId`)
+and the attribute schema are Darkhunt-specific; trace-hub is the only intended
+receiver. Built-in client-side data masking redacts ~60 secret/PII patterns
+before payloads leave the process.
 
 Key shapes:
 
 - **`DarkhuntTelemetry`** — the client. One per process, lifetime-of-the-process.
 - **`Trace`** — a single user-facing interaction. Carries routing fields
-  (tenant / workspace / application / assessmentRunId).
+  (tenant / workspace / application).
 - **`Generation`** — one LLM round-trip under a trace. Carries `model`,
   `inputMessages`, `outputMessages`, `usage`, `cost`, `metadata`.
 - **`Span`** — anything else (tool calls, retrievals, guardrails, sub-agents,
@@ -131,7 +134,7 @@ function openGeneration(
     tenantId: string;
     workspaceId: string;
     applicationId: string;
-    assessmentRunId: string;
+    assessmentRunId: string; // optional — used by Darkhunt assessment workflows
     techniqueId: string;
   },
   spanSuffix: string,
@@ -144,7 +147,7 @@ function openGeneration(
     tenantId: ctx.tenantId,
     workspaceId: ctx.workspaceId,
     applicationId: ctx.applicationId,
-    assessmentRunId: ctx.assessmentRunId,
+    assessmentRunId: ctx.assessmentRunId, // optional; Darkhunt-internal grouping
     userId: 'darkhunt',
     userEmail: 'darkhunt',
     startTime, // backdate root span
@@ -186,10 +189,10 @@ intermediate state to record.
 
 ## Routing fields
 
-Every span carries four required routing attributes — `tenantId`,
-`workspaceId`, `applicationId`, `assessmentRunId`. The exporter groups by
-these and posts to `POST /otlp/t/{tenantId}/v1/traces` with
-`X-Workspace-Id` / `X-Application-Id` headers.
+Every span carries three required routing attributes — `tenantId`,
+`workspaceId`, `applicationId`. The exporter groups by these and posts to
+`POST /otlp/t/{tenantId}/v1/traces` with `X-Workspace-Id` / `X-Application-Id`
+headers.
 
 Set them once at the client level if they're constant for the process; pass
 per-trace if multi-tenant. The constructor merges
@@ -204,7 +207,7 @@ const dh = new DarkhuntTelemetry({
   workspaceId: 'ws-1',
   applicationId: 'app-1',
 });
-dh.trace({ assessmentRunId: 'run-' + Date.now() }); // tenant/workspace/app inherited
+dh.trace({ name: 'chat' }); // tenant/workspace/app inherited
 
 // Multi-tenant: per-trace
 const dh = new DarkhuntTelemetry({ apiKey: process.env.DH_API_KEY });
@@ -212,9 +215,14 @@ dh.trace({
   tenantId: req.tenantId,
   workspaceId: req.wsId,
   applicationId: 'shared',
-  assessmentRunId: 'r',
 });
 ```
+
+`assessmentRunId` is **optional** and used internally by Darkhunt assessment
+workflows (e.g. `attack-discovery`). It does not affect routing. General
+production tracing should omit it. When set, it's emitted as
+`darkhunt.assessment_run_id` and read by trace-hub for grouping inside the
+assessment dashboards.
 
 ## In-cluster vs public ingest
 
@@ -256,6 +264,94 @@ drop the rest" pattern.
 
 Spans nest naturally — `parent.span(...)` makes the child a child in the
 trace tree.
+
+## Supported fields — SDK ↔ trace-hub mapping
+
+This is the canonical list of what the SDK can emit and what trace-hub
+reads. Anything not in this table is either dead code (set by SDK, ignored
+by backend) or a backend gap (read by backend, no SDK API yet — see
+"Known gaps" below). Source of truth for the right column:
+`/Users/sergey/proj/darkhunt/trace-hub/src/main/resources/mappings/darkhunt.yaml`.
+
+### Trace-level fields
+
+Set on `client.trace({...})` or as constructor defaults on `new DarkhuntTelemetry({...})`.
+
+| SDK option        | Required | OTel attribute emitted             | trace-hub field                    |
+| ----------------- | -------- | ---------------------------------- | ---------------------------------- |
+| `tenantId`        | yes      | `darkhunt.tenant_id` + URL routing | tenant scope                       |
+| `workspaceId`     | yes      | `darkhunt.workspace_id` + header   | workspace scope                    |
+| `applicationId`   | yes      | `darkhunt.application_id` + header | application scope                  |
+| `name`            | no       | `darkhunt.trace.name`              | `trace.name`                       |
+| `sessionId`       | no       | `darkhunt.session.id`              | `trace.sessionId`                  |
+| `userId`          | no       | `darkhunt.user.id`                 | `trace.userId`                     |
+| `userEmail`       | no       | `darkhunt.user.email`              | `trace.userEmail`                  |
+| `tags`            | no       | `darkhunt.trace.tags` (CSV)        | `trace.tags`                       |
+| `release`         | no       | `darkhunt.release`                 | `trace.version` + `serviceVersion` |
+| `environment`     | no       | `darkhunt.environment`             | `environment.deployment`           |
+| `assessmentRunId` | no       | `darkhunt.assessment_run_id`       | `trace.assessmentRunId` (internal) |
+
+OTel resource attributes auto-set by the SDK (read by trace-hub as
+`environment.serviceName` / `environment.serviceVersion`):
+
+- `service.name` → `darkhunt-telemetry`
+- `service.version` → SDK package version
+
+### Span-level fields (all spans)
+
+Set on `trace.span(name, opts)` / `trace.generation(name, opts)` / via
+`.update(opts)` / `.end(opts)`.
+
+| SDK option        | OTel attribute emitted                | trace-hub field                  | Notes                                                                                                                       |
+| ----------------- | ------------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `observationType` | `darkhunt.observation.type`           | `span.type`                      | one of `span` / `tool` / `agent` / `generation` / `event` / `chain` / `retriever` / `evaluator` / `embedding` / `guardrail` |
+| `input`           | `darkhunt.observation.input`          | `content.input`                  | masked; objects walked recursively                                                                                          |
+| `output`          | `darkhunt.observation.output`         | `content.output`                 | masked                                                                                                                      |
+| `level`           | `darkhunt.observation.level`          | `span.level`                     | `'DEFAULT'` / `'DEBUG'` / `'WARNING'` / `'ERROR'`                                                                           |
+| `statusMessage`   | OTel `setStatus({ message })`         | `error.message` (`_span_status`) | masked; sets ERROR status when paired with `level: 'ERROR'`                                                                 |
+| `version`         | `darkhunt.version`                    | `span.version`                   |                                                                                                                             |
+| `metadata`        | `darkhunt.observation.metadata.<key>` | `span.metadata.<key>`            | one OTel attr per key — never a single JSON blob (backend can't iterate)                                                    |
+
+### Generation-only fields
+
+Set on `trace.generation(name, opts)` / via `.update(opts)` / `.end(opts)`.
+These add to the span fields above.
+
+| SDK option                    | OTel attribute(s) emitted                                                 | trace-hub field              |
+| ----------------------------- | ------------------------------------------------------------------------- | ---------------------------- |
+| `model`                       | `darkhunt.observation.model.name` + `gen_ai.request.model`                | `model.name`                 |
+| `modelParameters`             | `darkhunt.observation.model.parameters` (JSON)                            | `model.parameters`           |
+| `inputMessages`               | `gen_ai.input.messages` (JSON)                                            | `content.input`              |
+| `outputMessages`              | `gen_ai.output.messages` (JSON)                                           | `content.output`             |
+| `systemInstructions`          | `gen_ai.system_instructions`                                              | `content.system`             |
+| `usage.input_tokens`          | `darkhunt.observation.usage_details` (JSON) + `gen_ai.usage.input_tokens` | `tokens.input`               |
+| `usage.output_tokens`         | `gen_ai.usage.output_tokens`                                              | `tokens.output`              |
+| `usage.cache_read_tokens`     | `gen_ai.usage.cache_read.input_tokens`                                    | `tokens.cacheRead`           |
+| `usage.cache_creation_tokens` | `gen_ai.usage.cache_creation.input_tokens`                                | `tokens.cacheCreation`       |
+| `cost`                        | `darkhunt.observation.cost_details` (JSON) + `gen_ai.usage.cost`          | `cost.json` + `cost.total`   |
+| `completionStartTime`         | `darkhunt.observation.completion_start_time` (nanos)                      | `timing.completionStartTime` |
+| `promptName`                  | `darkhunt.observation.prompt.name`                                        | `prompt.name`                |
+| `promptVersion`               | `darkhunt.observation.prompt.version`                                     | `prompt.version`             |
+
+### Known gaps (backend reads, SDK doesn't yet emit)
+
+Don't try to use these from SDK code — there's no public API. If the user
+needs them, fall back to the workaround listed.
+
+| trace-hub field                            | YAML reads                                          | Workaround until SDK supports it                                                                    |
+| ------------------------------------------ | --------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `model.provider`                           | `gen_ai.system`                                     | Put provider in `metadata.provider` for now                                                         |
+| `tool.name` / `callId` / `parameters`      | `gen_ai.tool.name` / `.call.id` / `.call.arguments` | Use `observationType: 'tool'` + `input` to record tool args; structured tool fields not yet emitted |
+| `environment.osType` / `arch` / `terminal` | `host.name` / `host.arch` / `process.runtime.name`  | OTel resource detectors may auto-populate these in some Node setups; not guaranteed                 |
+
+### Things the SDK sets but trace-hub ignores
+
+Don't rely on these — they exist in the wire payload but never reach the
+dashboard:
+
+- `darkhunt.status_message` — set by SDK alongside `setStatus({ message })`,
+  but the YAML mapping reads only `_span_status` (the OTel native). The
+  redundant attr is dead weight today.
 
 ## Verification
 
@@ -307,9 +403,17 @@ will lose the in-memory batch).
 - `src/worker.ts:77-90` — graceful shutdown on SIGTERM/SIGINT
 - `src/config.ts:32-37` — `TELEMETRY_BASE_URL` env wiring
 
-## When to read the SDK README
+## When to read the SDK docs
 
-Read `/Users/sergey/proj/darkhunt/darkhunt-telemetry-ts/README.md` for:
+The repo README at `/Users/sergey/proj/darkhunt/darkhunt-telemetry-ts/README.md`
+is intentionally thin — it covers install, the 4-step integration, common
+patterns, and points at the full guide. The full SDK guide is the
+docusaurus page at:
+
+`/Users/sergey/proj/darkhunt/docs/docs/darkhunt-ai-security/sdks/typescript.md`
+(published as `https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript`)
+
+Read the docs page for:
 
 - Custom masking patterns (`mask.customPatterns`)
 - Multi-turn chat sessions (one trace, many generations under it)
@@ -318,6 +422,12 @@ Read `/Users/sergey/proj/darkhunt/darkhunt-telemetry-ts/README.md` for:
 - Recording errors with `level: 'ERROR'` + `statusMessage`
 - Filling in `userId` / `sessionId` after the trace opens (`trace.update(...)`)
 - The full configuration table and env-var precedence
+- Built-in masking ruleset (66 rules, 13 markers, validators)
 
-The README is canonical for the SDK API; this skill is the integration
-playbook tuned to the conventions used across Darkhunt services.
+For the canonical attribute mapping (what trace-hub actually reads), see the
+"Supported fields" table above and verify against
+`/Users/sergey/proj/darkhunt/trace-hub/src/main/resources/mappings/darkhunt.yaml`
+when in doubt — that YAML is the contract.
+
+This skill is the integration playbook tuned to the conventions used across
+Darkhunt services; the docs page is the user-facing SDK reference.

@@ -142,7 +142,8 @@ export class DarkhuntTelemetry {
     requireField(merged.tenantId, 'tenantId', 'DARKHUNT_TENANT_ID');
     requireField(merged.workspaceId, 'workspaceId', 'DARKHUNT_WORKSPACE_ID');
     requireField(merged.applicationId, 'applicationId', 'DARKHUNT_APPLICATION_ID');
-    requireField(merged.assessmentRunId, 'assessmentRunId', 'DARKHUNT_ASSESSMENT_RUN_ID');
+    // assessmentRunId is optional — used internally by Darkhunt assessment
+    // workflows. Production tracing does not need to set it.
 
     const tracer =
       this._enabled && this.tracer ? this.tracer : otTrace.getTracer(LIB_NAME, LIB_VERSION);

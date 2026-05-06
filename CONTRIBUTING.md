@@ -40,32 +40,6 @@ npm run test:coverage   # generates coverage/lcov.info — Sonar check on PR
 
 Your PR template (`.github/PULL_REQUEST_TEMPLATE.md`) has the full checklist.
 
-## Commit signing — DCO
-
-We use the [Developer Certificate of Origin](https://developercertificate.org/) (DCO). It's a one-line attestation that you wrote the code (or have permission to contribute it) — much lighter than a CLA, no paperwork.
-
-To sign your commits:
-
-```bash
-git commit -s -m "your message"
-```
-
-The `-s` flag adds a `Signed-off-by: Your Name <your.email@example.com>` trailer. CI rejects unsigned commits.
-
-To sign every commit by default:
-
-```bash
-git config --global commit.gpgsign false   # if you have GPG signing on; DCO is separate
-git config alias.cs "commit -s"
-# then use `git cs ...` instead of `git commit ...`
-```
-
-To retroactively sign an existing branch:
-
-```bash
-git rebase -i HEAD~N --signoff
-```
-
 ## Code style
 
 - **TypeScript strict mode** — `strict: true` + `noUncheckedIndexedAccess` are on. No `any` without a comment explaining why.

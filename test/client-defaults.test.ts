@@ -108,11 +108,22 @@ describe('DarkhuntTelemetry routing defaults', () => {
     const dh = new DarkhuntTelemetry({
       enabled: false,
       tenantId: 't',
+      // workspaceId intentionally omitted
+      applicationId: 'a',
+    });
+    assert.throws(() => dh.trace(), /workspaceId is required.*DARKHUNT_WORKSPACE_ID/s);
+  });
+
+  it('does not require assessmentRunId — it is optional, internal-only', () => {
+    const dh = new DarkhuntTelemetry({
+      enabled: false,
+      tenantId: 't',
       workspaceId: 'w',
       applicationId: 'a',
       // assessmentRunId intentionally omitted
     });
-    assert.throws(() => dh.trace(), /assessmentRunId is required.*DARKHUNT_ASSESSMENT_RUN_ID/s);
+    const trace = dh.trace();
+    assert.equal(trace.assessmentRunId, '');
   });
 
   it('release/environment defaults still work alongside the new routing defaults', () => {
