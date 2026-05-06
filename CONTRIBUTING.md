@@ -16,13 +16,13 @@ That's the full local loop. If those three commands pass, your environment is se
 
 ## What we accept
 
-| Welcome | Out of scope |
-|---|---|
-| Bug fixes with a regression test | Reformatting / re-styling unrelated code (use a separate PR) |
+| Welcome                                                                                                                          | Out of scope                                                                                       |
+| -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Bug fixes with a regression test                                                                                                 | Reformatting / re-styling unrelated code (use a separate PR)                                       |
 | New masking rules in `src/masking/rules/data-masking-rules.yaml` (must include `examples:` — the data-driven test enforces this) | New backends — the SDK speaks vanilla OTLP; backend-specific extensions belong in adapter packages |
-| New validators in `src/masking/validators/` (one file per validator, pure function, full test coverage) | Sweeping refactors without a discussed motivation — file an issue first |
-| Documentation improvements | Adding heavyweight runtime dependencies (each new dep affects every consumer's bundle) |
-| Performance fixes with before/after measurements | Removing tests to make CI green |
+| New validators in `src/masking/validators/` (one file per validator, pure function, full test coverage)                          | Sweeping refactors without a discussed motivation — file an issue first                            |
+| Documentation improvements                                                                                                       | Adding heavyweight runtime dependencies (each new dep affects every consumer's bundle)             |
+| Performance fixes with before/after measurements                                                                                 | Removing tests to make CI green                                                                    |
 
 For anything non-trivial, **open an issue first** to discuss the approach. Saves both sides effort if the answer is "we're going a different direction."
 
@@ -69,7 +69,7 @@ git rebase -i HEAD~N --signoff
 ## Code style
 
 - **TypeScript strict mode** — `strict: true` + `noUncheckedIndexedAccess` are on. No `any` without a comment explaining why.
-- **No comments that just restate code** — the code says what; comments say *why*.
+- **No comments that just restate code** — the code says what; comments say _why_.
 - **Tests live next to the thing they test** — `src/masking/validators/luhn.ts` → `test/masking/validators.test.ts` (grouped by category).
 - **One validator per file** under `src/masking/validators/`; one test per validator with positive + negative cases.
 - **No emojis in source files or commit messages** unless the situation genuinely calls for one.

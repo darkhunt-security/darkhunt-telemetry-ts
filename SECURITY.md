@@ -34,10 +34,10 @@ Out of scope:
 
 ## Supported versions
 
-| Version | Status |
-|---|---|
-| Latest minor (`0.x`) | Security fixes shipped on demand |
-| Older minors | Best-effort; we'll pull patches forward if it's straightforward |
+| Version              | Status                                                          |
+| -------------------- | --------------------------------------------------------------- |
+| Latest minor (`0.x`) | Security fixes shipped on demand                                |
+| Older minors         | Best-effort; we'll pull patches forward if it's straightforward |
 
 We don't currently maintain LTS branches.
 

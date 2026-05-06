@@ -103,14 +103,14 @@ shutdown. Long-running servers must wire it up. From
 
 ```ts
 const shutdown = (signal: NodeJS.Signals) => {
-  logger.info({ signal }, "shutting down");
+  logger.info({ signal }, 'shutting down');
   void apiServer.close();
   void worker.shutdown();
   void shutdownTelemetry();
   void stopHealthServer();
 };
-process.once("SIGTERM", shutdown);
-process.once("SIGINT", shutdown);
+process.once('SIGTERM', shutdown);
+process.once('SIGINT', shutdown);
 
 // On natural exit, await the same shutdown again (idempotent because
 // shutdownTelemetry no-ops once the client is null):
@@ -127,26 +127,31 @@ Pattern from `attack-discovery/src/activities/iterate-llm.ts:154-176`:
 
 ```ts
 function openGeneration(
-  ctx: { tenantId: string; workspaceId: string; applicationId: string;
-        assessmentRunId: string; techniqueId: string },
+  ctx: {
+    tenantId: string;
+    workspaceId: string;
+    applicationId: string;
+    assessmentRunId: string;
+    techniqueId: string;
+  },
   spanSuffix: string,
-  startTime: number,  // epoch ms — captured BEFORE any await
+  startTime: number // epoch ms — captured BEFORE any await
 ): { trace: Trace; generation: Generation } {
   const client = getTelemetryClient();
   const trace = client.trace({
     name: ctx.assessmentRunId,
-    sessionId: ctx.assessmentRunId,  // groups all turns of one run as one timeline
+    sessionId: ctx.assessmentRunId, // groups all turns of one run as one timeline
     tenantId: ctx.tenantId,
     workspaceId: ctx.workspaceId,
     applicationId: ctx.applicationId,
     assessmentRunId: ctx.assessmentRunId,
-    userId: "darkhunt",
-    userEmail: "darkhunt",
-    startTime,  // backdate root span
+    userId: 'darkhunt',
+    userEmail: 'darkhunt',
+    startTime, // backdate root span
   });
   const generation = trace.generation(
     `${ctx.techniqueId}:${spanSuffix}`,
-    { startTime },  // backdate generation span
+    { startTime } // backdate generation span
   );
   return { trace, generation };
 }
@@ -161,12 +166,12 @@ LLM time. Same applies to the trace root span.
 
 ```ts
 generation.update({
-  inputMessages: [{ role: "user", content: prompt }],
-  metadata: buildTurnSpanMetadata(input),  // see "metadata discipline" below
+  inputMessages: [{ role: 'user', content: prompt }],
+  metadata: buildTurnSpanMetadata(input), // see "metadata discipline" below
 });
 generation.end({
   model,
-  outputMessages: [{ role: "assistant", content: reply }],
+  outputMessages: [{ role: 'assistant', content: reply }],
   usage: {
     input_tokens: usage.inputTokens,
     output_tokens: usage.outputTokens,
@@ -199,7 +204,7 @@ const dh = new DarkhuntTelemetry({
   workspaceId: 'ws-1',
   applicationId: 'app-1',
 });
-dh.trace({ assessmentRunId: 'run-' + Date.now() });  // tenant/workspace/app inherited
+dh.trace({ assessmentRunId: 'run-' + Date.now() }); // tenant/workspace/app inherited
 
 // Multi-tenant: per-trace
 const dh = new DarkhuntTelemetry({ apiKey: process.env.DH_API_KEY });
@@ -213,10 +218,10 @@ dh.trace({
 
 ## In-cluster vs public ingest
 
-| Caller location | `internal` | Auth | URL pattern |
-|---|---|---|---|
-| In-cluster service-to-service | `true` | none (cluster network policy gates it) | `POST {baseUrl}/internal/t/{tenantId}/v1/traces` |
-| External CLI / browser / app | `false` (default) | `Authorization: Bearer <apiKey>` | `POST {baseUrl}/otlp/t/{tenantId}/v1/traces` |
+| Caller location               | `internal`        | Auth                                   | URL pattern                                      |
+| ----------------------------- | ----------------- | -------------------------------------- | ------------------------------------------------ |
+| In-cluster service-to-service | `true`            | none (cluster network policy gates it) | `POST {baseUrl}/internal/t/{tenantId}/v1/traces` |
+| External CLI / browser / app  | `false` (default) | `Authorization: Bearer <apiKey>`       | `POST {baseUrl}/otlp/t/{tenantId}/v1/traces`     |
 
 `attack-discovery` runs in-cluster and uses `internal: true` with no
 `apiKey`; CLIs and dashboards use `internal: false` and pass a `dh-...`
@@ -239,15 +244,15 @@ drop the rest" pattern.
 
 ## Span types — pick the right one
 
-| Work | API | `observationType` |
-|---|---|---|
-| LLM round-trip | `trace.generation(name, opts)` | (auto: `generation`) |
-| External tool / function call | `trace.span(name, { observationType: 'tool', ... })` | `'tool'` |
-| Vector search / retrieval | `trace.span(name, { observationType: 'retriever', ... })` | `'retriever'` |
-| Sub-agent step | `trace.span(name, { observationType: 'agent', ... })` | `'agent'` |
-| Input/output guardrail | `trace.span(name, { observationType: 'guardrail', ... })` | `'guardrail'` |
-| Generic work | `trace.span(name, opts)` | `'span'` (default) |
-| Fire-and-forget marker | `trace.event(name, opts)` | `'event'` |
+| Work                          | API                                                       | `observationType`    |
+| ----------------------------- | --------------------------------------------------------- | -------------------- |
+| LLM round-trip                | `trace.generation(name, opts)`                            | (auto: `generation`) |
+| External tool / function call | `trace.span(name, { observationType: 'tool', ... })`      | `'tool'`             |
+| Vector search / retrieval     | `trace.span(name, { observationType: 'retriever', ... })` | `'retriever'`        |
+| Sub-agent step                | `trace.span(name, { observationType: 'agent', ... })`     | `'agent'`            |
+| Input/output guardrail        | `trace.span(name, { observationType: 'guardrail', ... })` | `'guardrail'`        |
+| Generic work                  | `trace.span(name, opts)`                                  | `'span'` (default)   |
+| Fire-and-forget marker        | `trace.event(name, opts)`                                 | `'event'`            |
 
 Spans nest naturally — `parent.span(...)` makes the child a child in the
 trace tree.
@@ -281,7 +286,7 @@ will lose the in-memory batch).
 1. **Constructing the client per call.** Causes listener leaks. Use the
    singleton pattern above.
 2. **Missing `startTime`.** Span duration shows ~0ms because the span starts
-   after the awaited LLM call returns. Always capture `Date.now()` *before*
+   after the awaited LLM call returns. Always capture `Date.now()` _before_
    the await.
 3. **No signal-driven shutdown.** SIGTERM/SIGINT bypasses `beforeExit`, so
    the in-memory span batch is lost. Wire SIGTERM/SIGINT to `client.shutdown()`.
