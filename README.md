@@ -8,7 +8,7 @@
 [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=darkhunt-security_darkhunt-telemetry-ts&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=darkhunt-security_darkhunt-telemetry-ts)
 [![Known Vulnerabilities](https://snyk.io/test/github/darkhunt-security/darkhunt-telemetry-ts/badge.svg)](https://snyk.io/test/github/darkhunt-security/darkhunt-telemetry-ts)
 
-TypeScript SDK for sending LLM traces, generations, and observations to the [Darkhunt platform](https://darkhunt.ai) for persistence and security data enrichment. Built on OpenTelemetry primitives, with built-in client-side data masking that redacts secrets and PII before payloads leave the process.
+TypeScript SDK for sending LLM traces, generations, and observations to the [Darkhunt platform](https://app.darkhunt.ai) for persistence and security data enrichment. Built on OpenTelemetry primitives, with built-in client-side data masking that redacts secrets and PII before payloads leave the process.
 
 > 🤖 **Skip the manual wiring** — if you use Claude Code, tell it _"add Darkhunt telemetry to this service"_ and the [`darkhunt-telemetry-integration`](https://github.com/darkhunt-security/darkhunt-telemetry-ts/blob/main/.claude/skills/darkhunt-telemetry-integration/SKILL.md) skill auto-invokes and does steps 1–5 below for you.
 
@@ -16,7 +16,7 @@ TypeScript SDK for sending LLM traces, generations, and observations to the [Dar
 
 ## Get started
 
-**Prerequisite — set up your project in Darkhunt.** Open the [Get started page](https://app.darkhunt.ai/get-started?flow=tool) in the Darkhunt dashboard to copy your `tenantId`, `workspaceId`, and `applicationId`, then create an API key (`dh-...`) by following [Creating an API key](https://docs.darkhunt.ai/darkhunt-ai-security/api-keys#creating-an-api-key). Step 2 reads all four values from env vars: `DH_TENANT_ID`, `DH_WORKSPACE_ID`, `DH_APPLICATION_ID`, `DH_API_KEY`.
+**Prerequisite — set up your project in Darkhunt.** Open the [Get started page](https://app.darkhunt.ai/get-started?flow=tool) in the Darkhunt dashboard to copy your `tenantId`, `workspaceId`, and `applicationId`, then create an API key (`dh-...`) by following [Creating an API key](https://docs.darkhunt.ai/darkhunt-ai-security/api-keys#creating-an-api-key). Set them in the environment as `DARKHUNT_TENANT_ID`, `DARKHUNT_WORKSPACE_ID`, `DARKHUNT_APPLICATION_ID`, and `DARKHUNT_API_KEY` — the SDK reads them automatically.
 
 ### 1. Install
 
@@ -34,14 +34,12 @@ The SDK holds a global `TracerProvider`, so instantiate it **exactly once** per 
 // src/telemetry.ts
 import { DarkhuntTelemetry } from '@darkhunt-security/telemetry';
 
-export const dh = new DarkhuntTelemetry({
-  apiKey: process.env.DH_API_KEY,
-  // Routing fields constant for this process — set once here:
-  tenantId: process.env.DH_TENANT_ID,
-  workspaceId: process.env.DH_WORKSPACE_ID,
-  applicationId: process.env.DH_APPLICATION_ID,
-});
+// Reads DARKHUNT_API_KEY, DARKHUNT_TENANT_ID, DARKHUNT_WORKSPACE_ID,
+// and DARKHUNT_APPLICATION_ID from the environment.
+export const dh = new DarkhuntTelemetry();
 ```
+
+Pass options explicitly if you need to override any of these (e.g. multi-tenant routing where `tenantId` varies per request — see [Common patterns](#common-patterns)).
 
 Import `dh` wherever you need to open a trace. Don't `new DarkhuntTelemetry()` again — a second provider will silently shadow the first.
 
@@ -118,7 +116,7 @@ For one-shot scripts (CLI tools, cron jobs), `await dh.flush()` before returning
 
 Run your service, exercise the path that opens a trace, then open **[app.darkhunt.ai/tracing](https://app.darkhunt.ai/tracing)** — incoming traces appear in the timeline. The default flush interval is `5s`, so wait a few seconds (or trigger graceful shutdown) if you don't see them immediately.
 
-If nothing shows up, the most common causes are: missing `DH_API_KEY` in the runtime env, wrong `tenantId` / `workspaceId` / `applicationId` (data lands in the wrong scope), or the process killed with `SIGKILL` before the buffer flushed.
+If nothing shows up, the most common causes are: missing `DARKHUNT_API_KEY` in the runtime env, wrong `tenantId` / `workspaceId` / `applicationId` (data lands in the wrong scope), or the process killed with `SIGKILL` before the buffer flushed.
 
 ---
 

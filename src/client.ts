@@ -2,12 +2,13 @@ import { trace as otTrace, type Tracer } from '@opentelemetry/api';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
+import pkg from '../package.json' with { type: 'json' };
 import { DarkhuntSpanExporter } from './exporter.js';
 import { Sanitizer, type CustomPattern } from './masking/index.js';
 import { Trace, type TraceArgs } from './trace.js';
 
 const LIB_NAME = 'darkhunt-telemetry';
-const LIB_VERSION = '0.1.0';
+const LIB_VERSION = pkg.version;
 
 export interface MaskingOptions {
   /**
