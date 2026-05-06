@@ -1,0 +1,33 @@
+# GitHub CODEOWNERS — review assignments
+# Reference: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-customization/customizing-your-repository/about-code-owners
+#
+# When a PR touches a path, listed owners are auto-requested for review.
+# The most-specific matching rule wins (later entries override earlier ones
+# for the same path).
+
+# --- Default owner for the whole repo ---
+* @darkhunt-security/engineering
+
+# --- Higher-risk areas: explicit re-listing for visibility ---
+# Same owner today; the per-path entries make it easy to add a security
+# sub-team or specific maintainer later without editing the default rule.
+
+# Data masking is the security-relevant core of this SDK.
+/src/masking/                       @darkhunt-security/engineering
+/src/masking/rules/                 @darkhunt-security/engineering
+/src/masking/validators/            @darkhunt-security/engineering
+
+# Exporter handles all outbound network + auth.
+/src/exporter.ts                    @darkhunt-security/engineering
+
+# CI, publish flow, and policy files.
+/.github/                           @darkhunt-security/engineering
+/sonar-project.properties           @darkhunt-security/engineering
+/renovate.json                      @darkhunt-security/engineering
+
+# Public-facing policy / licensing — review carefully when changed.
+/LICENSE                            @darkhunt-security/engineering
+/NOTICE                             @darkhunt-security/engineering
+/SECURITY.md                        @darkhunt-security/engineering
+/CODE_OF_CONDUCT.md                 @darkhunt-security/engineering
+/CONTRIBUTING.md                    @darkhunt-security/engineering

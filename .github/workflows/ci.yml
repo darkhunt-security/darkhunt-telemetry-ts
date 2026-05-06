@@ -5,17 +5,33 @@ on:
     branches: [main]
   pull_request:
 
+# Default-deny — each job opts in to only what it needs.
+permissions: {}
+
+# Cancel in-flight runs when a new commit lands on the same branch / PR.
+# Saves CI minutes and gives faster feedback on rapid push sequences.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # PR decoration via SonarCloud needs to read PR metadata; the scan-action
+      # uses GITHUB_TOKEN under the hood for that.
+      pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           # Sonar needs full git history for blame / change-window analysis.
           # Shallow clone (the default) makes Sonar warn and disables some checks.
           fetch-depth: 0
+          # Don't persist GITHUB_TOKEN in .git/config — defense-in-depth.
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: '.node-version'
           cache: npm
@@ -27,6 +43,15 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
 
+      - name: Verify lockfile integrity
+        # Catches accidental package.json/lockfile drift, AND any malicious dep
+        # that mutates the lockfile during install.
+        run: |
+          git diff --exit-code package-lock.json || {
+            echo "::error::package-lock.json was modified during install"
+            exit 1
+          }
+
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
@@ -36,7 +61,7 @@ jobs:
         run: npm run test:coverage
 
       - name: SonarCloud scan
-        uses: SonarSource/sonarqube-scan-action@v6
+        uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6.0.0
         env:
           # GITHUB_TOKEN is needed for PR decoration (annotates PRs with issues)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -59,9 +84,11 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: '.node-version'
           cache: npm
@@ -83,6 +110,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
 
+      - name: Verify lockfile integrity
+        run: |
+          git diff --exit-code package-lock.json || {
+            echo "::error::package-lock.json was modified during install"
+            exit 1
+          }
+
       - run: npm run build
 
       - name: Publish to GitHub Packages
@@ -96,7 +130,7 @@ jobs:
           echo "VERSION=${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
 
       - name: Notify Slack
-        uses: slackapi/slack-github-action@v3.0.1
+        uses: slackapi/slack-github-action@af78098f536edbc4de71162a307590698245be95 # v3.0.1
         with:
           method: chat.postMessage
           token: ${{ secrets.SLACK_BOT_TOKEN }}
