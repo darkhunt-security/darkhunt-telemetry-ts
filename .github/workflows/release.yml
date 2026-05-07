@@ -1,0 +1,109 @@
+name: Release
+
+# Triggers when a GitHub Release is published. Use `gh release create vX.Y.Z`
+# (or the GitHub UI) to fire this — pushing a tag alone won't.
+on:
+  release:
+    types: [published]
+
+# Default-deny; each job opts into the minimum it needs.
+permissions: {}
+
+jobs:
+  # Build once and reuse the tarball for both registries so the bytes are
+  # identical across publishes (npm and GHPR see the same shasum).
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tarball: ${{ steps.pack.outputs.tarball }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      # Sanity: refuse to publish a tag that doesn't match package.json#version.
+      # Catches "tagged v0.6.0 but forgot to bump package.json" before it ships.
+      - name: Verify tag matches package.json version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::Release tag v$tag does not match package.json version $pkg"
+            exit 1
+          fi
+
+      - id: pack
+        run: |
+          file=$(npm pack --silent)
+          echo "tarball=$file" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tarball
+          path: '*.tgz'
+          retention-days: 7
+
+  publish-npm:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # Required for npm provenance attestation.
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: '.node-version'
+          registry-url: https://registry.npmjs.org
+          scope: '@darkhunt-security'
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tarball
+
+      - name: Publish to public npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish *.tgz --provenance --access public
+
+  publish-ghpr:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # GHPR write requires this permission on GITHUB_TOKEN.
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: '.node-version'
+          registry-url: https://npm.pkg.github.com
+          scope: '@darkhunt-security'
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tarball
+
+      # GHPR ignores `publishConfig.registry` from the tarball when the env
+      # `--registry` flag is set, so dual-publishing the same tarball works
+      # even though the file's publishConfig points at the public registry.
+      - name: Publish to GitHub Package Registry
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm publish *.tgz --registry https://npm.pkg.github.com
