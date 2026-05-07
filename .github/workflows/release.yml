@@ -42,9 +42,13 @@ jobs:
             exit 1
           fi
 
+      # `npm pack --silent` only suppresses npm's own logs — lifecycle scripts
+      # (prepare → generate-rules-json.ts) still log their progress to stdout,
+      # which would otherwise contaminate the captured tarball name. Take the
+      # last line, which is always the produced .tgz filename.
       - id: pack
         run: |
-          file=$(npm pack --silent)
+          file=$(npm pack --silent | tail -n 1)
           echo "tarball=$file" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
