@@ -1,0 +1,44 @@
+# Dependabot config — public-repo replacement for renovate.json. The OSS repo
+# can't reach the org's GitHub App secrets that the Renovate workflow needed,
+# so we lean on GitHub's built-in updater here.
+#
+# What carries over from the old Renovate config: weekly cadence, grouped
+# OpenTelemetry bumps (so the @opentelemetry/* packages stay in lockstep),
+# grouped github-actions bumps, grouped dev-dependency minor/patch updates,
+# `dependencies` label on every PR. Vulnerability fixes still flow via
+# GitHub's security-update path (configured in repo Settings → Security,
+# not in this file).
+#
+# What we lose: Dependabot has no dependency-dashboard issue, no custom
+# managers, and no per-update-type labelling. Trade-off accepted in exchange
+# for not running a token-creating workflow in a public repo.
+
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+    open-pull-requests-limit: 10
+    groups:
+      opentelemetry:
+        patterns:
+          - "@opentelemetry/*"
+      dev-dependencies-minor-patch:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+    groups:
+      github-actions:
+        patterns:
+          - "*"
