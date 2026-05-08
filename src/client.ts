@@ -1,4 +1,4 @@
-import { trace as otTrace, type Tracer } from '@opentelemetry/api';
+import { diag, trace as otTrace, type Tracer } from '@opentelemetry/api';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
@@ -81,7 +81,9 @@ export class DarkhuntTelemetry {
   private tracer?: Tracer;
 
   constructor(options: DarkhuntTelemetryOptions = {}) {
-    const baseUrl = options.baseUrl ?? process.env.DARKHUNT_BASE_URL ?? 'https://app.darkhunt.ai';
+    // Ingest host, not the dashboard host (which redirects POSTs to /auth/login → 405).
+    const baseUrl =
+      options.baseUrl ?? process.env.DARKHUNT_BASE_URL ?? 'https://api.darkhunt.ai/trace-hub';
     const apiKey = options.apiKey ?? process.env.DARKHUNT_API_KEY ?? '';
     this._release = options.release ?? process.env.DARKHUNT_RELEASE;
     this._environment = options.environment ?? process.env.DARKHUNT_ENVIRONMENT;
@@ -152,14 +154,21 @@ export class DarkhuntTelemetry {
   }
 
   async flush(): Promise<void> {
+    // BatchSpanProcessor rejects with `undefined` on persistent export
+    // failure ("uncaught (in promise): undefined"); swallow and re-surface
+    // via diag.warn so callers can always `await flush()` safely.
     if (this.provider) {
-      await this.provider.forceFlush();
+      await this.provider.forceFlush().catch((err) => {
+        diag.warn('darkhunt-telemetry: forceFlush() failed; spans may be lost', err);
+      });
     }
   }
 
   async shutdown(): Promise<void> {
     if (this.provider) {
-      await this.provider.shutdown();
+      await this.provider.shutdown().catch((err) => {
+        diag.warn('darkhunt-telemetry: provider.shutdown() failed', err);
+      });
       this.provider = undefined;
       this.tracer = undefined;
     }
