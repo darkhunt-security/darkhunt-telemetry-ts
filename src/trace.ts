@@ -31,8 +31,18 @@ export interface TraceArgs {
   workspaceId?: string;
   applicationId?: string;
   assessmentRunId?: string;
+  /**
+   * Routing identifiers. **Not run through the masking sanitizer** — they are
+   * sent verbatim because the dashboard groups, filters, and de-duplicates by
+   * exact match. Do not put free-form text or user-controlled content (chat
+   * input, prompts, query strings) here; anything you pass will round-trip
+   * unmodified to the trace-hub. For PII-bearing identifiers, hash on the
+   * caller side first.
+   */
   sessionId?: string;
+  /** See {@link TraceArgs.sessionId} — not masked, sent verbatim. */
   userId?: string;
+  /** See {@link TraceArgs.sessionId} — not masked, sent verbatim. */
   userEmail?: string;
   tags?: string[];
   metadata?: Metadata;
@@ -53,8 +63,11 @@ export interface TraceUpdateArgs {
   workspaceId?: string;
   applicationId?: string;
   assessmentRunId?: string;
+  /** See {@link TraceArgs.sessionId} — not masked, sent verbatim. */
   sessionId?: string;
+  /** See {@link TraceArgs.sessionId} — not masked, sent verbatim. */
   userId?: string;
+  /** See {@link TraceArgs.sessionId} — not masked, sent verbatim. */
   userEmail?: string;
   tags?: string[];
   metadata?: Metadata;
