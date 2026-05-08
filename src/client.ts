@@ -16,7 +16,9 @@ const LIB_VERSION = pkg.version;
 const activeInstances = new Set<DarkhuntTelemetry>();
 let beforeExitInstalled = false;
 const beforeExitHandler = async (): Promise<void> => {
-  for (const dh of [...activeInstances]) {
+  // Iterate the live Set: shutdown() deletes the current entry, but Set
+  // iterators are safe under deletion of the just-yielded element.
+  for (const dh of activeInstances) {
     try {
       await dh.shutdown();
     } catch {
