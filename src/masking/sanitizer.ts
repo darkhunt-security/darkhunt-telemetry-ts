@@ -28,13 +28,13 @@ interface CompiledRule {
 }
 
 /**
- * Zero-width characters that an attacker (or a careless serializer) can splice
- * between the bytes of a secret to defeat the masking regex. Strip them before
- * the rule loop so e.g. `sk-proj-​1234…` still matches the OpenAI key
- * pattern. This is lossy on the ZWS bytes themselves, by design — they are
- * not visible in any UI.
+ * Zero-width characters (ZWSP, ZWNJ, ZWJ, BOM) that an attacker or careless
+ * serializer can splice between the bytes of a secret to defeat the masking
+ * regex — e.g. `sk-proj-<U+200B>1234…` would otherwise sneak through. Strip
+ * them before the rule loop. Lossy on the ZWS bytes themselves, by design;
+ * they are not visible in any UI.
  */
-const ZERO_WIDTH_CHARS = /[​‌‍﻿]/g;
+const ZERO_WIDTH_CHARS = /\u200B|\u200C|\u200D|\uFEFF/g;
 
 /**
  * Reject the well-known catastrophic-backtracking shapes — a greedy class
@@ -134,7 +134,7 @@ export class Sanitizer {
   sanitize(input: string): string {
     if (input.length === 0) return input;
     // Strip zero-width chars first so a spliced ZWS can't bypass the rule
-    // regexes (e.g. `sk-proj-​1234…` still matches the OpenAI key pattern).
+    // regexes (e.g. a U+200B between bytes of an OpenAI key would sneak through).
     let result = input.replace(ZERO_WIDTH_CHARS, '');
     for (const rule of this.rules) {
       if (rule.validator) {
