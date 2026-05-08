@@ -189,6 +189,10 @@ export class DarkhuntSpanExporter implements SpanExporter {
       } catch {
         // network/timeout — retry
       }
+      // Skip the trailing sleep on the final attempt — BatchSpanProcessor's
+      // forceFlush is awaiting us and the result is already "give up", so
+      // sleeping just adds dead time before the rejection lands.
+      if (attempt === MAX_RETRIES - 1) break;
       // Add 0–50% jitter so concurrent retrying clients don't synchronize.
       // Use crypto.randomInt rather than Math.random — not for security
       // reasons (jitter has no security impact), but to satisfy strict
