@@ -5,17 +5,13 @@ language: en-US
 early_access: false
 
 # Project conventions CodeRabbit should respect on every review.
-# Spelled out here so it doesn't repeatedly suggest changes that conflict
-# with how the codebase is intentionally written.
-tone_instructions: |
-  Be concise and concrete. The project already runs Prettier, ESLint, and
-  TypeScript strict mode — skip suggestions about formatting, naming
-  conventions, or stylistic simplifications. Focus on:
-  - Correctness bugs (off-by-one, wrong validator output, missed edge cases)
-  - Security regressions (especially in the masking layer)
-  - Test coverage gaps for new behavior
-  - API consistency across Trace / Span / Generation / Sanitizer
-  Don't generate poems, ASCII art, or excessive summaries.
+# Schema caps tone_instructions at 250 chars — see path_instructions below
+# for the longer per-area guidance.
+tone_instructions: >
+  Be concise. Skip formatting/naming/style notes — Prettier, ESLint, tsc
+  strict handle those. Focus on correctness bugs, masking-layer security
+  regressions, test gaps, and API consistency across
+  Trace/Span/Generation/Sanitizer.
 
 chat:
   auto_reply: true
@@ -104,8 +100,6 @@ reviews:
 
   tools:
     eslint:
-      enabled: true
-    prettier:
       enabled: true
     actionlint:
       enabled: true

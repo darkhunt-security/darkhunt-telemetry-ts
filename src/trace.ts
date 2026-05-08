@@ -31,8 +31,18 @@ export interface TraceArgs {
   workspaceId?: string;
   applicationId?: string;
   assessmentRunId?: string;
+  /**
+   * Routing identifiers. **Not run through the masking sanitizer** — they are
+   * sent verbatim because the dashboard groups, filters, and de-duplicates by
+   * exact match. Do not put free-form text or user-controlled content (chat
+   * input, prompts, query strings) here; anything you pass will round-trip
+   * unmodified to the trace-hub. For PII-bearing identifiers, hash on the
+   * caller side first.
+   */
   sessionId?: string;
+  /** See {@link TraceArgs.sessionId} — not masked, sent verbatim. */
   userId?: string;
+  /** See {@link TraceArgs.sessionId} — not masked, sent verbatim. */
   userEmail?: string;
   tags?: string[];
   metadata?: Metadata;
@@ -53,8 +63,11 @@ export interface TraceUpdateArgs {
   workspaceId?: string;
   applicationId?: string;
   assessmentRunId?: string;
+  /** See {@link TraceArgs.sessionId} — not masked, sent verbatim. */
   sessionId?: string;
+  /** See {@link TraceArgs.sessionId} — not masked, sent verbatim. */
   userId?: string;
+  /** See {@link TraceArgs.sessionId} — not masked, sent verbatim. */
   userEmail?: string;
   tags?: string[];
   metadata?: Metadata;
@@ -100,11 +113,20 @@ export class Trace {
     this._environment = args.environment;
 
     this.rootSpan = tracer.startSpan(
-      args.name ?? 'trace',
+      this.maskName(args.name ?? 'trace'),
       args.startTime !== undefined ? { startTime: args.startTime } : undefined
     );
     this.rootContext = otTrace.setSpan(otContext.active(), this.rootSpan);
     this.applyTraceAttrs(this.rootSpan);
+  }
+
+  /**
+   * Sanitize a span/trace name. Names land on the wire verbatim via
+   * `tracer.startSpan(name)`, so user-controlled values can leak; identifying
+   * fields like `userId` / `model` are intentionally not masked, names are.
+   */
+  maskName(name: string): string {
+    return this._sanitizer ? this._sanitizer.sanitize(name) : name;
   }
 
   get name(): string | undefined {
@@ -194,12 +216,15 @@ export class Trace {
     span.setAttribute(ATTR.WORKSPACE_ID, this._workspaceId);
     span.setAttribute(ATTR.APPLICATION_ID, this._applicationId);
     span.setAttribute(ATTR.ASSESSMENT_RUN_ID, this._assessmentRunId);
-    if (this._name) span.setAttribute(ATTR.TRACE_NAME, this._name);
+    if (this._name) span.setAttribute(ATTR.TRACE_NAME, this.maskName(this._name));
     if (this._sessionId) span.setAttribute(ATTR.SESSION_ID, this._sessionId);
     if (this._userId) span.setAttribute(ATTR.USER_ID, this._userId);
     if (this._userEmail) span.setAttribute(ATTR.USER_EMAIL, this._userEmail);
-    if (this._tags && this._tags.length > 0)
-      span.setAttribute(ATTR.TRACE_TAGS, this._tags.join(','));
+    if (this._tags && this._tags.length > 0) {
+      const sanitizer = this._sanitizer;
+      const tags = sanitizer ? this._tags.map((t) => sanitizer.sanitize(t)) : this._tags;
+      span.setAttribute(ATTR.TRACE_TAGS, tags.join(','));
+    }
     if (this._release) span.setAttribute(ATTR.RELEASE, this._release);
     if (this._environment) span.setAttribute(ATTR.ENVIRONMENT, this._environment);
     if (this._metadata) applyMetadataAttrs(span, this._metadata, this._sanitizer);
