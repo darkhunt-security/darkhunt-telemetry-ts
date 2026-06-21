@@ -283,33 +283,33 @@ The canonical list of what the SDK emits and what trace-hub reads.
 
 Set on `client.trace({...})` or as constructor defaults on `new DarkhuntTelemetry({...})`.
 
-| SDK option        | Required | trace-hub field                    |
-| ----------------- | -------- | ---------------------------------- |
-| `tenantId`        | yes      | tenant scope                       |
-| `workspaceId`     | yes      | workspace scope                    |
-| `applicationId`   | yes      | application scope                  |
-| `name`            | no       | `trace.name`                       |
-| `sessionId`       | no       | `trace.sessionId`                  |
-| `userId`          | no       | `trace.userId`                     |
-| `userEmail`       | no       | `trace.userEmail`                  |
-| `tags`            | no       | `trace.tags`                       |
-| `release`         | no       | `trace.version` + `serviceVersion` |
-| `environment`     | no       | `environment.deployment`           |
+| SDK option      | Required | trace-hub field                    |
+| --------------- | -------- | ---------------------------------- |
+| `tenantId`      | yes      | tenant scope                       |
+| `workspaceId`   | yes      | workspace scope                    |
+| `applicationId` | yes      | application scope                  |
+| `name`          | no       | `trace.name`                       |
+| `sessionId`     | no       | `trace.sessionId`                  |
+| `userId`        | no       | `trace.userId`                     |
+| `userEmail`     | no       | `trace.userEmail`                  |
+| `tags`          | no       | `trace.tags`                       |
+| `release`       | no       | `trace.version` + `serviceVersion` |
+| `environment`   | no       | `environment.deployment`           |
 
 ### Span-level fields (all spans)
 
 Set on `trace.span(name, opts)` / `trace.generation(name, opts)` / via
 `.update(opts)` / `.end(opts)`.
 
-| SDK option        | trace-hub field                  | Notes                                                                                              |
-| ----------------- | -------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `observationType` | `span.type`                      | `span` / `tool` / `agent` / `generation` / `event` / `chain` / `retriever` / `evaluator` / `embedding` / `guardrail` |
-| `input`           | `content.input`                  | masked; objects walked recursively                                                                 |
-| `output`          | `content.output`                 | masked                                                                                             |
-| `level`           | `span.level`                     | `'DEFAULT'` / `'DEBUG'` / `'WARNING'` / `'ERROR'`                                                  |
-| `statusMessage`   | `error.message`                  | masked; sets ERROR status when paired with `level: 'ERROR'`                                        |
-| `version`         | `span.version`                   |                                                                                                    |
-| `metadata`        | `span.metadata.<key>`            | one attribute per key — never a single JSON blob                                                   |
+| SDK option        | trace-hub field       | Notes                                                                                                                |
+| ----------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `observationType` | `span.type`           | `span` / `tool` / `agent` / `generation` / `event` / `chain` / `retriever` / `evaluator` / `embedding` / `guardrail` |
+| `input`           | `content.input`       | masked; objects walked recursively                                                                                   |
+| `output`          | `content.output`      | masked                                                                                                               |
+| `level`           | `span.level`          | `'DEFAULT'` / `'DEBUG'` / `'WARNING'` / `'ERROR'`                                                                    |
+| `statusMessage`   | `error.message`       | masked; sets ERROR status when paired with `level: 'ERROR'`                                                          |
+| `version`         | `span.version`        |                                                                                                                      |
+| `metadata`        | `span.metadata.<key>` | one attribute per key — never a single JSON blob                                                                     |
 
 ### Generation-only fields
 
