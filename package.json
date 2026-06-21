@@ -1,6 +1,6 @@
 {
   "name": "@darkhunt-security/telemetry",
-  "version": "0.5.0",
+  "version": "0.5.3",
   "description": "TypeScript SDK for sending LLM traces, generations, and observations to the Darkhunt platform for persistence and security data enrichment. Built on OpenTelemetry primitives, with built-in client-side data masking.",
   "type": "module",
   "license": "Apache-2.0",
@@ -31,8 +31,8 @@
     "README.md"
   ],
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com",
-    "access": "restricted"
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   },
   "repository": {
     "type": "git",
@@ -40,7 +40,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "prepare": "tsx scripts/generate-rules-json.ts",
+    "prepare": "tsx scripts/generate-rules-json.ts && tsc",
     "prebuild": "tsx scripts/generate-rules-json.ts",
     "build": "tsc",
     "prepublishOnly": "npm run build",

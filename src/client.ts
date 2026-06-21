@@ -1,4 +1,4 @@
-import { trace as otTrace, type Tracer } from '@opentelemetry/api';
+import { diag, trace as otTrace, type Tracer } from '@opentelemetry/api';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
@@ -9,6 +9,31 @@ import { Trace, type TraceArgs } from './trace.js';
 
 const LIB_NAME = 'darkhunt-telemetry';
 const LIB_VERSION = pkg.version;
+
+// Single shared `beforeExit` handler across all SDK instances. Per-instance
+// handlers would trip MaxListenersExceededWarning when a process constructs
+// >10 SDKs (test runners, multi-tenant servers).
+const activeInstances = new Set<DarkhuntTelemetry>();
+let beforeExitInstalled = false;
+const beforeExitHandler = async (): Promise<void> => {
+  for (const dh of [...activeInstances]) {
+    try {
+      await dh.shutdown();
+    } catch {
+      // shutdown already swallows; nothing to do here
+    }
+  }
+};
+function ensureBeforeExitHandler(): void {
+  if (beforeExitInstalled) return;
+  beforeExitInstalled = true;
+  process.once('beforeExit', beforeExitHandler);
+}
+function removeBeforeExitHandlerIfIdle(): void {
+  if (activeInstances.size > 0 || !beforeExitInstalled) return;
+  process.removeListener('beforeExit', beforeExitHandler);
+  beforeExitInstalled = false;
+}
 
 export interface MaskingOptions {
   /**
@@ -81,7 +106,9 @@ export class DarkhuntTelemetry {
   private tracer?: Tracer;
 
   constructor(options: DarkhuntTelemetryOptions = {}) {
-    const baseUrl = options.baseUrl ?? process.env.DARKHUNT_BASE_URL ?? 'https://app.darkhunt.ai';
+    // Ingest host, not the dashboard host (which redirects POSTs to /auth/login → 405).
+    const baseUrl =
+      options.baseUrl ?? process.env.DARKHUNT_BASE_URL ?? 'https://api.darkhunt.ai/trace-hub';
     const apiKey = options.apiKey ?? process.env.DARKHUNT_API_KEY ?? '';
     this._release = options.release ?? process.env.DARKHUNT_RELEASE;
     this._environment = options.environment ?? process.env.DARKHUNT_ENVIRONMENT;
@@ -119,9 +146,8 @@ export class DarkhuntTelemetry {
           options.flushIntervalMs ?? toFloat(process.env.DARKHUNT_FLUSH_INTERVAL, 5) * 1000,
         timeoutMs: options.timeoutMs ?? toFloat(process.env.DARKHUNT_TIMEOUT, 10) * 1000,
       });
-      process.once('beforeExit', () => {
-        void this.shutdown();
-      });
+      activeInstances.add(this);
+      ensureBeforeExitHandler();
     }
   }
 
@@ -152,14 +178,23 @@ export class DarkhuntTelemetry {
   }
 
   async flush(): Promise<void> {
+    // BatchSpanProcessor rejects with `undefined` on persistent export
+    // failure ("uncaught (in promise): undefined"); swallow and re-surface
+    // via diag.warn so callers can always `await flush()` safely.
     if (this.provider) {
-      await this.provider.forceFlush();
+      await this.provider.forceFlush().catch((err) => {
+        diag.warn('darkhunt-telemetry: forceFlush() failed; spans may be lost', err);
+      });
     }
   }
 
   async shutdown(): Promise<void> {
+    activeInstances.delete(this);
+    removeBeforeExitHandlerIfIdle();
     if (this.provider) {
-      await this.provider.shutdown();
+      await this.provider.shutdown().catch((err) => {
+        diag.warn('darkhunt-telemetry: provider.shutdown() failed', err);
+      });
       this.provider = undefined;
       this.tracer = undefined;
     }

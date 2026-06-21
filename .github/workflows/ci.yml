@@ -23,7 +23,7 @@ jobs:
       # uses GITHUB_TOKEN under the hood for that.
       pull-requests: read
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           # Sonar needs full git history for blame / change-window analysis.
           # Shallow clone (the default) makes Sonar warn and disables some checks.
@@ -31,7 +31,7 @@ jobs:
           # Don't persist GITHUB_TOKEN in .git/config — defense-in-depth.
           persist-credentials: false
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version-file: '.node-version'
           cache: npm
@@ -61,7 +61,7 @@ jobs:
         run: npm run test:coverage
 
       - name: SonarCloud scan
-        uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6.0.0
+        uses: SonarSource/sonarqube-scan-action@59db25f34e16620e48ab4bb9e4a5dce155cb5432 # v8.0.0
         env:
           # GITHUB_TOKEN is needed for PR decoration (annotates PRs with issues).
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -79,11 +79,11 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version-file: '.node-version'
           cache: npm
@@ -128,7 +128,7 @@ jobs:
           echo "VERSION=${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
 
       - name: Notify Slack
-        uses: slackapi/slack-github-action@af78098f536edbc4de71162a307590698245be95 # v3.0.1
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_RELEASES }}
           webhook-type: incoming-webhook
