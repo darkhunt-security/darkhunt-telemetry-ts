@@ -10,7 +10,14 @@
 
 TypeScript SDK for sending LLM traces, generations, and observations to the [Darkhunt platform](https://app.darkhunt.ai) for persistence and security data enrichment. Built on OpenTelemetry primitives, with built-in client-side data masking that redacts secrets and PII before payloads leave the process.
 
-> 🤖 **Skip the manual wiring** — if you use Claude Code, tell it _"add Darkhunt telemetry to this service"_ and the [`darkhunt-telemetry-integration`](https://github.com/darkhunt-security/darkhunt-telemetry-ts/blob/main/.claude/skills/darkhunt-telemetry-integration/SKILL.md) skill auto-invokes and does steps 1–5 below for you.
+> 🤖 **Skip the manual wiring** — if you use Claude Code, install the Darkhunt plugin once:
+>
+> ```
+> /plugin marketplace add darkhunt-security/darkhunt-telemetry-ts
+> /plugin install darkhunt-telemetry@darkhunt
+> ```
+>
+> Then tell Claude _"add Darkhunt telemetry to this service"_ and the [`darkhunt-telemetry-integration`](https://github.com/darkhunt-security/darkhunt-telemetry-ts/blob/main/plugins/darkhunt-telemetry/skills/darkhunt-telemetry-integration/SKILL.md) skill auto-invokes and does steps 1–5 below for you.
 
 ---
 
@@ -24,7 +31,7 @@ TypeScript SDK for sending LLM traces, generations, and observations to the [Dar
 npm install @darkhunt-security/telemetry
 ```
 
-> Requires Node 24+ and an ESM project (`"type": "module"` in `package.json`). For CommonJS consumers, use dynamic `import()` or migrate to ESM.
+> Requires Node `^18.19.0 || >=20.6.0` and an ESM project (`"type": "module"` in `package.json`). For CommonJS consumers, use dynamic `import()` or migrate to ESM.
 
 ### 2. Create a singleton module
 
