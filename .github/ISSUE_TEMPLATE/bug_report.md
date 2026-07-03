@@ -21,9 +21,7 @@ The smallest standalone code that triggers the bug. If it requires real LLM call
 ```ts
 import { DarkhuntTelemetry } from '@darkhunt-security/telemetry';
 
-const dh = new DarkhuntTelemetry({
-  /* ... */
-});
+const dh = new DarkhuntTelemetry({/* ... */});
 // ...
 ```
 
