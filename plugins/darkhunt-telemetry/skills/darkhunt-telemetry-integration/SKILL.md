@@ -196,10 +196,14 @@ export async function handleChat(req, res) {
 }
 ```
 
-**Critical: capture `startTime = Date.now()` BEFORE any awaited LLM call.**
-Without `startTime`, the OTel span starts at construction time (post-LLM-call),
-so the recorded duration covers only ~0ms of bookkeeping instead of actual
-LLM time. Same applies to the trace root span.
+**`startTime` backdates the span to a timestamp you captured earlier.** Pass it
+(on both the trace root and the generation) whenever the moment the span should
+begin is earlier than the line that constructs it. In the example above the
+spans are opened _before_ the await, so they already capture the full LLM
+latency — `startTime` just pins the start to the exact captured instant rather
+than the slightly-later construction line. It becomes essential when you instead
+open the generation _after_ the call returns (a common pattern): without it the
+span starts post-call and records ~0ms of duration.
 
 `update()` is for fields known at start; `end()` is for fields known when work
 finishes. You can pass everything to `end()` if there's no streaming
@@ -368,9 +372,9 @@ exits gracefully so `flush()` runs (a `kill -9` loses the in-memory batch).
 
 1. **Constructing the client per call.** Causes listener leaks. Use the
    singleton module above.
-2. **Missing `startTime`.** Span duration shows ~0ms because the span starts
-   after the awaited LLM call returns. Always capture `Date.now()` _before_
-   the await.
+2. **Opening a span after the work, without `startTime`.** If you construct the
+   generation _after_ the awaited call returns, its duration shows ~0ms. Capture
+   `Date.now()` before the call and pass it as `startTime` to backdate the span.
 3. **No signal-driven shutdown.** SIGTERM/SIGINT bypasses `beforeExit`, so
    the in-memory span batch is lost. Wire SIGTERM/SIGINT to `dh.shutdown()`.
 4. **Routing fields scattered across constructor + per-trace.** Pick one

@@ -144,10 +144,13 @@ export class DarkhuntTelemetry {
       this._sanitizer = new Sanitizer(undefined, options.mask?.customPatterns ?? []);
     }
 
+    // `||` (not `??`) so an empty-string env var (a declared-but-unpopulated
+    // container var) falls through to the next source instead of producing an
+    // empty `service.name` resource attribute.
     const serviceName =
-      options.serviceName ??
-      process.env.DARKHUNT_SERVICE_NAME ??
-      process.env.OTEL_SERVICE_NAME ??
+      options.serviceName ||
+      process.env.DARKHUNT_SERVICE_NAME ||
+      process.env.OTEL_SERVICE_NAME ||
       LIB_NAME;
 
     if (this._enabled) {
