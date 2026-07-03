@@ -142,14 +142,34 @@ Worked examples for each: [full SDK guide](https://docs.darkhunt.ai/darkhunt-ai-
 
 Every option resolves as **constructor argument > env var > default**. The most common subset:
 
-| Option            | Env var                   | Default                   |
-| ----------------- | ------------------------- | ------------------------- |
-| `apiKey`          | `DARKHUNT_API_KEY`        | _(required)_              |
-| `baseUrl`         | `DARKHUNT_BASE_URL`       | `https://app.darkhunt.ai` |
-| `enabled`         | `DARKHUNT_ENABLED`        | `true`                    |
-| `flushAt`         | `DARKHUNT_FLUSH_AT`       | `20` records              |
-| `flushIntervalMs` | `DARKHUNT_FLUSH_INTERVAL` | `5s`                      |
-| `mask.enabled`    | —                         | `true`                    |
+| Option            | Env var                                       | Default                             |
+| ----------------- | --------------------------------------------- | ----------------------------------- |
+| `apiKey`          | `DARKHUNT_API_KEY`                            | _(required)_                        |
+| `baseUrl`         | `DARKHUNT_BASE_URL`                           | `https://api.darkhunt.ai/trace-hub` |
+| `serviceName`     | `DARKHUNT_SERVICE_NAME` / `OTEL_SERVICE_NAME` | library name                        |
+| `enabled`         | `DARKHUNT_ENABLED`                            | `true`                              |
+| `flushAt`         | `DARKHUNT_FLUSH_AT`                           | `20` records                        |
+| `flushIntervalMs` | `DARKHUNT_FLUSH_INTERVAL`                     | `5s`                                |
+| `mask.enabled`    | —                                             | `true`                              |
+
+> **Setting `baseUrl` for a non-prod environment.** It must be the **ingest API
+> host**, not the dashboard, **and include the `/trace-hub` path** — the SDK posts
+> to `{baseUrl}/otlp/t/{tenantId}/v1/traces`, and the gateway routes the
+> `/trace-hub` prefix to the ingest service. Use `api…darkhunt.ai/trace-hub`, not
+> `app…darkhunt.ai`:
+>
+> - ✅ `https://api.darkhunt.ai/trace-hub` (prod, the default)
+> - ✅ `https://api-<env>.darkhunt.ai/trace-hub` (e.g. `https://api-seth-dev.darkhunt.ai/trace-hub`)
+> - ❌ `https://app.darkhunt.ai` — the dashboard host redirects POSTs (→ 405)
+> - ❌ `https://api-<env>.darkhunt.ai` — missing `/trace-hub` → **404**
+
+> **Identifying services / agents.** `serviceName` sets the OTel Resource
+> `service.name`, the standard way to identify which producer emitted a span.
+> In a multi-service or multi-agent system, give **each process its own**
+> `serviceName` (e.g. `weather.coordinator`, `weather.geodata`) — the platform
+> records it per span so you can distinguish, group, and filter by service.
+> Since the Resource is per-`TracerProvider` (i.e. per client/process), distinct
+> names require distinct processes/clients, not a single shared instance.
 
 Full table, all routing-field env vars, and per-option behavior: [docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript#configuration](https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript#configuration).
 

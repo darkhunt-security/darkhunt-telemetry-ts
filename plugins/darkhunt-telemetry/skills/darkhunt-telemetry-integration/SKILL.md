@@ -103,9 +103,22 @@ and set them as `DARKHUNT_TENANT_ID`, `DARKHUNT_WORKSPACE_ID`,
 `DARKHUNT_APPLICATION_ID` — the SDK reads those automatically too (see
 [Routing fields](#routing-fields)).
 
-The base URL defaults to `https://app.darkhunt.ai`; override it via the
-`DARKHUNT_BASE_URL` env var or the `baseUrl` option if pointing at a
-self-hosted / staging trace-hub.
+The base URL defaults to `https://api.darkhunt.ai/trace-hub`; override it via the
+`DARKHUNT_BASE_URL` env var or the `baseUrl` option when pointing at a
+self-hosted / staging / dev trace-hub. **Two rules when you override it:** use the
+**ingest API host** (`api…darkhunt.ai`), not the dashboard (`app…darkhunt.ai`,
+which redirects POSTs → 405); and **keep the `/trace-hub` path** — the exporter
+posts to `{baseUrl}/otlp/t/{tenantId}/v1/traces`, so dropping `/trace-hub` yields 404. Example (dev): `DARKHUNT_BASE_URL=https://api-seth-dev.darkhunt.ai/trace-hub`.
+
+Set **`serviceName`** (option, or `DARKHUNT_SERVICE_NAME` / `OTEL_SERVICE_NAME`) to the OTel
+Resource `service.name`. The backend records it per span, so in a multi-service / multi-agent
+system give **each process its own** value (e.g. `weather.coordinator`, `weather.geodata`) to tell
+producers apart — the Resource is per-`TracerProvider`, so distinct names require distinct
+clients/processes, not one shared instance.
+
+For `tool`-type observations, set **`toolName`** (and optionally `toolCallId` / `toolArguments`) on
+the span — emitted as `gen_ai.tool.name` / `gen_ai.tool.call.id` / `gen_ai.tool.call.arguments`, the
+fields the backend uses to show the actual tool (e.g. "geocode") rather than the generic type.
 
 ### 3. Singleton client (process-wide)
 
