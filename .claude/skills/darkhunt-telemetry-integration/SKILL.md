@@ -52,15 +52,17 @@ Key shapes:
 ### 1. Install + pin
 
 **Preflight check before installing.** The SDK is ESM-only and requires
-Node 24+. Before adding the dependency, verify the target project:
+Node `^18.19.0 || >=20.6.0` (the floor set by its OpenTelemetry deps).
+Before adding the dependency, verify the target project:
 
 - `package.json` has `"type": "module"` (or the project is otherwise ESM,
   e.g. via `.mts` files). If the project is CommonJS, stop and tell the
   user the SDK won't `require()` cleanly — they need to migrate to ESM or
   use dynamic `import()` from a CJS wrapper, neither of which the agent
   should do silently.
-- `package.json` `engines.node` (or the project's CI matrix) is on Node 24+.
-  If the project pins an older Node, flag it and ask before bumping.
+- `package.json` `engines.node` (or the project's CI matrix) satisfies
+  `^18.19.0 || >=20.6.0`. If the project pins an older Node (< 18.19), flag
+  it and ask before bumping.
 
 Once both check out:
 
@@ -77,7 +79,64 @@ Pin a recent published build in `package.json`:
 (Match whatever version the user's organisation publishes through CI; the
 `-build.N` suffix reflects the CI run.)
 
-### 2. Singleton client (process-wide)
+### 2. Get an API key
+
+A `dh-...` API key is required for public/external ingest (`internal: false`
+— CLIs, browsers, app servers calling the public endpoint). In-cluster
+service-to-service callers using `internal: true` don't need one (the cluster
+network policy gates auth) and can skip this step.
+
+Create one in the Darkhunt dashboard:
+
+1. Open **https://app.darkhunt.ai** and go to **Settings** (bottom of the left
+   nav).
+2. Under the **SECURITY** group, click **API Keys**
+   (`Settings → Security → API Keys`).
+3. Click **+ Create API key** (top right).
+4. Give it a descriptive **Name** (e.g. `production-tracing`,
+   `my-service-staging`) and pick an **Expiration**
+   (30 / 60 / 90 / 180 days, 1 year, or No expiration). Default is 90 days —
+   prefer a bounded expiry for production and set a rotation reminder.
+5. Click **Create**, then **copy the key immediately** — the full secret is
+   shown only once. Afterwards the list only displays the masked prefix
+   (e.g. `dh-9028f••••••••`).
+
+The key carries the **same privileges as your account**, so treat it as a
+secret: store it in a secrets manager / env file, never commit it.
+
+**The env var the key must go in is `DARKHUNT_API_KEY`** — that's the name the
+SDK reads by default (`src/client.ts:85`,
+`options.apiKey ?? process.env.DARKHUNT_API_KEY`):
+
+```bash
+DARKHUNT_API_KEY=dh-9028f...your-full-secret...
+```
+
+Equivalently, pass it explicitly as the `apiKey` constructor option (an
+explicit `apiKey` wins over the env var). Either way it's sent as
+`Authorization: Bearer <apiKey>` on the public ingest path. If it's missing on
+the public endpoint (`internal: false` and `enabled`), the constructor throws:
+`apiKey is required for the public endpoint (pass via options, set
+DARKHUNT_API_KEY, or use internal: true)`.
+
+The base URL defaults to `https://api.darkhunt.ai/trace-hub`; override it via the
+`DARKHUNT_BASE_URL` env var or the `baseUrl` option when pointing at a
+self-hosted / staging / dev trace-hub. **Two rules when you override it:** use the
+**ingest API host** (`api…darkhunt.ai`), not the dashboard (`app…darkhunt.ai`,
+which redirects POSTs → 405); and **keep the `/trace-hub` path** — the exporter
+posts to `{baseUrl}/otlp/t/{tenantId}/v1/traces`, so dropping `/trace-hub` yields 404. Example (dev): `DARKHUNT_BASE_URL=https://api-seth-dev.darkhunt.ai/trace-hub`.
+
+Set **`serviceName`** (option, or `DARKHUNT_SERVICE_NAME` / `OTEL_SERVICE_NAME`) to the OTel
+Resource `service.name`. The backend records it per span, so in a multi-service / multi-agent
+system give **each process its own** value (e.g. `weather.coordinator`, `weather.geodata`) to tell
+producers apart — the Resource is per-`TracerProvider`, so distinct names require distinct
+clients/processes, not one shared instance.
+
+For `tool`-type observations, set **`toolName`** (and optionally `toolCallId` / `toolArguments`) on
+the span — emitted as `gen_ai.tool.name` / `gen_ai.tool.call.id` / `gen_ai.tool.call.arguments`, the
+fields the backend uses to show the actual tool (e.g. "geocode") rather than the generic type.
+
+### 3. Singleton client (process-wide)
 
 **Don't construct `DarkhuntTelemetry` per request.** The SDK registers a
 `process.once('beforeExit', ...)` handler per construction and spins up a
@@ -111,7 +170,7 @@ export async function shutdownTelemetry(): Promise<void> {
 }
 ```
 
-### 3. Wire shutdown on signals
+### 4. Wire shutdown on signals
 
 The SDK auto-flushes on `process.beforeExit`, but **not** on signal-driven
 shutdown. Long-running servers must wire it up. From
@@ -137,7 +196,7 @@ await shutdownTelemetry();
 For one-shot scripts / CLIs / cron jobs: `await client.flush()` before
 returning is enough — the `beforeExit` hook handles teardown.
 
-### 4. Open trace + generation per LLM call
+### 5. Open trace + generation per LLM call
 
 Pattern from `attack-discovery/src/activities/iterate-llm.ts:154-176`:
 
@@ -178,7 +237,7 @@ Without `startTime`, the OTel span starts at construction time (post-LLM-call),
 so the recorded duration covers only ~0ms of bookkeeping instead of actual
 LLM time. Same applies to the trace root span.
 
-### 5. End span with payload
+### 6. End span with payload
 
 ```ts
 generation.update({
@@ -214,8 +273,8 @@ is still missing.
 
 ```ts
 // Single-tenant: client-level
+// (apiKey omitted — the SDK reads DARKHUNT_API_KEY from the env by default)
 const dh = new DarkhuntTelemetry({
-  apiKey: process.env.DH_API_KEY,
   tenantId: 't1',
   workspaceId: 'ws-1',
   applicationId: 'app-1',
@@ -223,7 +282,7 @@ const dh = new DarkhuntTelemetry({
 dh.trace({ name: 'chat' }); // tenant/workspace/app inherited
 
 // Multi-tenant: per-trace
-const dh = new DarkhuntTelemetry({ apiKey: process.env.DH_API_KEY });
+const dh = new DarkhuntTelemetry();
 dh.trace({
   tenantId: req.tenantId,
   workspaceId: req.wsId,
