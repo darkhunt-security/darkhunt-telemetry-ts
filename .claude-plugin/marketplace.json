@@ -1,0 +1,22 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "darkhunt",
+  "description": "Darkhunt developer tools for Claude Code — skills for integrating Darkhunt LLM observability and security into your services.",
+  "owner": {
+    "name": "Darkhunt Security, Inc.",
+    "email": "support@darkhunt.ai"
+  },
+  "plugins": [
+    {
+      "name": "darkhunt-telemetry",
+      "description": "Integration playbook for the @darkhunt-security/telemetry SDK — wires LLM tracing, generations, and spans (with built-in secret/PII masking) into a Node/TypeScript service. Auto-invokes when you ask Claude to add Darkhunt telemetry / observability to a service.",
+      "source": "./plugins/darkhunt-telemetry",
+      "category": "observability",
+      "author": {
+        "name": "Darkhunt Security, Inc.",
+        "email": "support@darkhunt.ai"
+      },
+      "homepage": "https://github.com/darkhunt-security/darkhunt-telemetry-ts"
+    }
+  ]
+}
