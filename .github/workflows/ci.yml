@@ -19,15 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # PR decoration via SonarCloud needs to read PR metadata; the scan-action
-      # uses GITHUB_TOKEN under the hood for that.
-      pull-requests: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          # Sonar needs full git history for blame / change-window analysis.
-          # Shallow clone (the default) makes Sonar warn and disables some checks.
-          fetch-depth: 0
           # Don't persist GITHUB_TOKEN in .git/config — defense-in-depth.
           persist-credentials: false
 
@@ -56,20 +50,11 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
+      - run: npm test
 
-      - name: Tests with coverage
-        run: npm run test:coverage
-
-      - name: SonarCloud scan
-        uses: SonarSource/sonarqube-scan-action@59db25f34e16620e48ab4bb9e4a5dce155cb5432 # v8.0.0
-        env:
-          # GITHUB_TOKEN is needed for PR decoration (annotates PRs with issues).
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # SONAR_TOKEN is the only Sonar secret this workflow needs — generate
-          # one at https://sonarcloud.io/account/security and add it as a repo
-          # secret. Project key + org are committed in sonar-project.properties
-          # (they're public info).
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      # Code quality / security analysis runs via SonarCloud Automatic Analysis
+      # (the SonarQube Cloud GitHub App scans pushes and PRs directly — no CI
+      # scanner step and no SONAR_TOKEN secret required).
 
   publish:
     needs: lint

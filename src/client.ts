@@ -57,6 +57,14 @@ export interface MaskingOptions {
 export interface DarkhuntTelemetryOptions {
   baseUrl?: string;
   apiKey?: string;
+  /**
+   * OTel Resource `service.name` for this client's TracerProvider — the
+   * standard way to identify which service/agent produced a span. Resolves as
+   * option > `DARKHUNT_SERVICE_NAME` > `OTEL_SERVICE_NAME` > the library name.
+   * In a multi-service / multi-agent system, give each process its own value
+   * (e.g. `weather.coordinator`) so the collector can distinguish them.
+   */
+  serviceName?: string;
   flushAt?: number;
   flushIntervalMs?: number;
   timeoutMs?: number;
@@ -138,11 +146,21 @@ export class DarkhuntTelemetry {
       this._sanitizer = new Sanitizer(undefined, options.mask?.customPatterns ?? []);
     }
 
+    // `||` (not `??`) so an empty-string env var (a declared-but-unpopulated
+    // container var) falls through to the next source instead of producing an
+    // empty `service.name` resource attribute.
+    const serviceName =
+      options.serviceName ||
+      process.env.DARKHUNT_SERVICE_NAME ||
+      process.env.OTEL_SERVICE_NAME ||
+      LIB_NAME;
+
     if (this._enabled) {
       this.setupProvider({
         baseUrl,
         apiKey,
         internal,
+        serviceName,
         flushAt: options.flushAt ?? toInt(process.env.DARKHUNT_FLUSH_AT, 20),
         flushIntervalMs:
           options.flushIntervalMs ?? toFloat(process.env.DARKHUNT_FLUSH_INTERVAL, 5) * 1000,
@@ -206,12 +224,13 @@ export class DarkhuntTelemetry {
     baseUrl: string;
     apiKey: string;
     internal: boolean;
+    serviceName: string;
     flushAt: number;
     flushIntervalMs: number;
     timeoutMs: number;
   }): void {
     const resource = resourceFromAttributes({
-      [ATTR_SERVICE_NAME]: LIB_NAME,
+      [ATTR_SERVICE_NAME]: opts.serviceName,
       [ATTR_SERVICE_VERSION]: LIB_VERSION,
     });
 

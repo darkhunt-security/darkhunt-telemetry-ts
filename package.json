@@ -1,6 +1,6 @@
 {
   "name": "@darkhunt-security/telemetry",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "TypeScript SDK for sending LLM traces, generations, and observations to the Darkhunt platform for persistence and security data enrichment. Built on OpenTelemetry primitives, with built-in client-side data masking.",
   "type": "module",
   "license": "Apache-2.0",
@@ -20,7 +20,7 @@
     "pii"
   ],
   "engines": {
-    "node": ">=24.4.1"
+    "node": "^18.19.0 || >=20.6.0"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -55,7 +55,7 @@
   "dependencies": {
     "@noble/hashes": "^1.8.0",
     "@opentelemetry/api": "^1.9.1",
-    "@opentelemetry/otlp-transformer": "^0.214.0",
+    "@opentelemetry/otlp-transformer": "^0.218.0",
     "@opentelemetry/resources": "^2.0.0",
     "@opentelemetry/sdk-trace-base": "^2.0.0",
     "@opentelemetry/sdk-trace-node": "^2.0.0",

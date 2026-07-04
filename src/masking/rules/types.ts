@@ -8,13 +8,7 @@
 
 /** A post-match validator name. SDKs that don't implement it MUST drop the rule (fail-closed). */
 export type Validator =
-  | 'luhn'
-  | 'credit_card'
-  | 'aba'
-  | 'iban_mod97'
-  | 'base58check'
-  | 'bech32'
-  | 'eip55';
+  'luhn' | 'credit_card' | 'aba' | 'iban_mod97' | 'base58check' | 'bech32' | 'eip55';
 
 /** A single data-masking rule: regex + marker + optional validator. */
 export interface MaskingRule {

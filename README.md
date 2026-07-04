@@ -3,14 +3,20 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![CI](https://github.com/darkhunt-security/darkhunt-telemetry-ts/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/darkhunt-security/darkhunt-telemetry-ts/actions/workflows/ci.yml)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=darkhunt-security_darkhunt-telemetry-ts&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=darkhunt-security_darkhunt-telemetry-ts)
-[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=darkhunt-security_darkhunt-telemetry-ts&metric=coverage)](https://sonarcloud.io/summary/new_code?id=darkhunt-security_darkhunt-telemetry-ts)
 [![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=darkhunt-security_darkhunt-telemetry-ts&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=darkhunt-security_darkhunt-telemetry-ts)
 [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=darkhunt-security_darkhunt-telemetry-ts&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=darkhunt-security_darkhunt-telemetry-ts)
 [![Known Vulnerabilities](https://snyk.io/test/github/darkhunt-security/darkhunt-telemetry-ts/badge.svg)](https://snyk.io/test/github/darkhunt-security/darkhunt-telemetry-ts)
 
 TypeScript SDK for sending LLM traces, generations, and observations to the [Darkhunt platform](https://app.darkhunt.ai) for persistence and security data enrichment. Built on OpenTelemetry primitives, with built-in client-side data masking that redacts secrets and PII before payloads leave the process.
 
-> 🤖 **Skip the manual wiring** — if you use Claude Code, tell it _"add Darkhunt telemetry to this service"_ and the [`darkhunt-telemetry-integration`](https://github.com/darkhunt-security/darkhunt-telemetry-ts/blob/main/.claude/skills/darkhunt-telemetry-integration/SKILL.md) skill auto-invokes and does steps 1–5 below for you.
+> 🤖 **Skip the manual wiring** — if you use Claude Code, install the Darkhunt plugin once:
+>
+> ```
+> /plugin marketplace add darkhunt-security/darkhunt-telemetry-ts
+> /plugin install darkhunt-telemetry@darkhunt
+> ```
+>
+> Then tell Claude _"add Darkhunt telemetry to this service"_ and the [`darkhunt-telemetry-integration`](https://github.com/darkhunt-security/darkhunt-telemetry-ts/blob/main/plugins/darkhunt-telemetry/skills/darkhunt-telemetry-integration/SKILL.md) skill auto-invokes and does steps 1–5 below for you.
 
 ---
 
@@ -24,7 +30,7 @@ TypeScript SDK for sending LLM traces, generations, and observations to the [Dar
 npm install @darkhunt-security/telemetry
 ```
 
-> Requires Node 24+ and an ESM project (`"type": "module"` in `package.json`). For CommonJS consumers, use dynamic `import()` or migrate to ESM.
+> Requires Node `^18.19.0 || >=20.6.0` and an ESM project (`"type": "module"` in `package.json`). For CommonJS consumers, use dynamic `import()` or migrate to ESM.
 
 ### 2. Create a singleton module
 
@@ -135,14 +141,34 @@ Worked examples for each: [full SDK guide](https://docs.darkhunt.ai/darkhunt-ai-
 
 Every option resolves as **constructor argument > env var > default**. The most common subset:
 
-| Option            | Env var                   | Default                   |
-| ----------------- | ------------------------- | ------------------------- |
-| `apiKey`          | `DARKHUNT_API_KEY`        | _(required)_              |
-| `baseUrl`         | `DARKHUNT_BASE_URL`       | `https://app.darkhunt.ai` |
-| `enabled`         | `DARKHUNT_ENABLED`        | `true`                    |
-| `flushAt`         | `DARKHUNT_FLUSH_AT`       | `20` records              |
-| `flushIntervalMs` | `DARKHUNT_FLUSH_INTERVAL` | `5s`                      |
-| `mask.enabled`    | —                         | `true`                    |
+| Option            | Env var                                       | Default                             |
+| ----------------- | --------------------------------------------- | ----------------------------------- |
+| `apiKey`          | `DARKHUNT_API_KEY`                            | _(required)_                        |
+| `baseUrl`         | `DARKHUNT_BASE_URL`                           | `https://api.darkhunt.ai/trace-hub` |
+| `serviceName`     | `DARKHUNT_SERVICE_NAME` / `OTEL_SERVICE_NAME` | library name                        |
+| `enabled`         | `DARKHUNT_ENABLED`                            | `true`                              |
+| `flushAt`         | `DARKHUNT_FLUSH_AT`                           | `20` records                        |
+| `flushIntervalMs` | `DARKHUNT_FLUSH_INTERVAL`                     | `5s`                                |
+| `mask.enabled`    | —                                             | `true`                              |
+
+> **Setting `baseUrl` for a non-prod environment.** It must be the **ingest API
+> host**, not the dashboard, **and include the `/trace-hub` path** — the SDK posts
+> to `{baseUrl}/otlp/t/{tenantId}/v1/traces`, and the gateway routes the
+> `/trace-hub` prefix to the ingest service. Use `api…darkhunt.ai/trace-hub`, not
+> `app…darkhunt.ai`:
+>
+> - ✅ `https://api.darkhunt.ai/trace-hub` (prod, the default)
+> - ✅ `https://api-<env>.darkhunt.ai/trace-hub` (e.g. `https://api-seth-dev.darkhunt.ai/trace-hub`)
+> - ❌ `https://app.darkhunt.ai` — the dashboard host redirects POSTs (→ 405)
+> - ❌ `https://api-<env>.darkhunt.ai` — missing `/trace-hub` → **404**
+
+> **Identifying services / agents.** `serviceName` sets the OTel Resource
+> `service.name`, the standard way to identify which producer emitted a span.
+> In a multi-service or multi-agent system, give **each process its own**
+> `serviceName` (e.g. `weather.coordinator`, `weather.geodata`) — the platform
+> records it per span so you can distinguish, group, and filter by service.
+> Since the Resource is per-`TracerProvider` (i.e. per client/process), distinct
+> names require distinct processes/clients, not a single shared instance.
 
 Full table, all routing-field env vars, and per-option behavior: [docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript#configuration](https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript#configuration).
 
