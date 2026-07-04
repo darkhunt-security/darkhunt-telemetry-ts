@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Configurable `service.name`.** New `serviceName` option (resolves
+  `serviceName` > `DARKHUNT_SERVICE_NAME` > `OTEL_SERVICE_NAME` > library name)
+  sets the OTel Resource `service.name`, which the backend records per span.
+  Give each process/agent its own value to distinguish producers in a
+  multi-service / multi-agent system. Previously hardcoded to the library name.
+- **Tool observation fields.** New `toolName` / `toolCallId` / `toolArguments`
+  span options emit `gen_ai.tool.name` / `gen_ai.tool.call.id` /
+  `gen_ai.tool.call.arguments`, so `tool`-type spans surface the actual tool
+  (e.g. "geocode") instead of the generic type.
+
+### Documentation
+
+- **`baseUrl` default corrected in the README config table and both integration
+  skills** to `https://api.darkhunt.ai/trace-hub` — they still showed the old
+  `https://app.darkhunt.ai` after the 0.5.3 default flip. Added explicit guidance
+  for overriding `DARKHUNT_BASE_URL` in non-prod environments: use the `api…`
+  ingest host **with** the `/trace-hub` path (e.g.
+  `https://api-seth-dev.darkhunt.ai/trace-hub`). Dropping `/trace-hub` returns
+  404; the `app…` dashboard host returns 405.
+
 ## [0.5.3] — 2026-05-08
 
 Bug-fix release driven by an external QA pass on 0.5.2. No public API

@@ -46,10 +46,11 @@ const ZERO_WIDTH_CHARS = /\u200B|\u200C|\u200D|\uFEFF/g;
  * vet their own pattern.
  */
 function assertNotPathological(regex: string, name?: string): void {
+  const nameLabel = name ? ` "${name}"` : '';
   const greedyClassQuantified = /\((?:\.|\\[wdsSW])[+*]\)[+*]/;
   if (greedyClassQuantified.test(regex)) {
     throw new Error(
-      `[darkhunt-telemetry] Custom masking pattern${name ? ` "${name}"` : ''} ` +
+      `[darkhunt-telemetry] Custom masking pattern${nameLabel} ` +
         `contains a nested-quantifier shape that can cause catastrophic ` +
         `backtracking on adversarial inputs (regex: ${regex}). ` +
         `Rewrite without nested quantifiers, or use possessive/atomic groups.`
@@ -58,7 +59,7 @@ function assertNotPathological(regex: string, name?: string): void {
   const overlappingAlternation = /\((\w)\|\1\)[+*]/;
   if (overlappingAlternation.test(regex)) {
     throw new Error(
-      `[darkhunt-telemetry] Custom masking pattern${name ? ` "${name}"` : ''} ` +
+      `[darkhunt-telemetry] Custom masking pattern${nameLabel} ` +
         `contains overlapping alternation that can cause catastrophic ` +
         `backtracking (regex: ${regex}).`
     );
@@ -177,8 +178,8 @@ export class Sanitizer {
       return value.map((v) => this.walk(v, seen));
     }
     if (value !== null && typeof value === 'object') {
-      if (seen.has(value as object)) return '[circular]';
-      seen.add(value as object);
+      if (seen.has(value)) return '[circular]';
+      seen.add(value);
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
         // Sanitize keys too: a secret used as a key (e.g. `{ [email]: 1 }`)

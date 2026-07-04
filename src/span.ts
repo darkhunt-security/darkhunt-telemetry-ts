@@ -56,6 +56,17 @@ export interface SpanOptions {
   version?: string;
   observationType?: ObservationType;
   /**
+   * Tool name for `tool`-type observations (e.g. "geocode"). Emitted as
+   * `gen_ai.tool.name` — the backend reads it as the observation's tool name
+   * and the dashboard uses it as the span title (otherwise it falls back to the
+   * generic type "tool"). Set this whenever `observationType: 'tool'`.
+   */
+  toolName?: string;
+  /** Tool-call id (e.g. the provider's `tool_call.id`). Emitted as `gen_ai.tool.call.id`. */
+  toolCallId?: string;
+  /** Tool-call arguments. Emitted (masked) as `gen_ai.tool.call.arguments`. */
+  toolArguments?: unknown;
+  /**
    * Backdated span start. Use this when the span is opened *after* the work
    * it represents has already started — pass the wall-clock start of the
    * work (e.g. `Date.now()` captured before the await). Without it, the OTel
@@ -100,6 +111,12 @@ export interface SpanUpdateOptions {
   level?: ObservationLevel;
   statusMessage?: string;
   version?: string;
+  /** See {@link SpanOptions.toolName}. */
+  toolName?: string;
+  /** See {@link SpanOptions.toolCallId}. */
+  toolCallId?: string;
+  /** See {@link SpanOptions.toolArguments}. */
+  toolArguments?: unknown;
 }
 
 export interface SpanEndOptions {
@@ -152,6 +169,7 @@ export class Span {
     if (opts.level) this.otelSpan.setAttribute(ATTR.OBSERVATION_LEVEL, opts.level);
     this.setMaskedStringAttr(ATTR.STATUS_MESSAGE, opts.statusMessage);
     this.setMaskedStringAttr(ATTR.VERSION, opts.version);
+    this.setToolAttrs(opts);
   }
 
   get context(): Context {
@@ -214,6 +232,7 @@ export class Span {
     if (options.level) this.otelSpan.setAttribute(ATTR.OBSERVATION_LEVEL, options.level);
     this.setMaskedStringAttr(ATTR.STATUS_MESSAGE, options.statusMessage);
     this.setMaskedStringAttr(ATTR.VERSION, options.version);
+    this.setToolAttrs(options);
     return this;
   }
 
@@ -253,6 +272,18 @@ export class Span {
 
   protected setMaskedStringAttr(key: string, value: string | undefined): void {
     if (value) this.otelSpan.setAttribute(key, this.maskString(value));
+  }
+
+  /** Emit `gen_ai.tool.*` attributes for tool observations (name/callId/arguments). */
+  protected setToolAttrs(opts: {
+    toolName?: string;
+    toolCallId?: string;
+    toolArguments?: unknown;
+  }): void {
+    this.setMaskedStringAttr(GEN_AI.TOOL_NAME, opts.toolName);
+    this.setMaskedStringAttr(GEN_AI.TOOL_CALL_ID, opts.toolCallId);
+    if (opts.toolArguments !== undefined)
+      this.setIo(GEN_AI.TOOL_CALL_ARGUMENTS, opts.toolArguments);
   }
 
   protected setMaskedJsonAttr(key: string, value: unknown): void {
