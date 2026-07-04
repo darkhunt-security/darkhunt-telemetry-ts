@@ -46,4 +46,14 @@ export const GEN_AI = {
   OUTPUT_MESSAGES: 'gen_ai.output.messages',
   /** OTel GenAI semantic convention for the system prompt sent to the model. */
   SYSTEM_INSTRUCTIONS: 'gen_ai.system_instructions',
+  /**
+   * OTel GenAI semantic conventions for a tool call. The backend maps
+   * `gen_ai.tool.name` to the observation's tool name, which the dashboard uses
+   * as the span title for `tool` observations (falling back to the type when
+   * absent). Set these on `tool`-type spans so they render as e.g. "geocode"
+   * instead of the generic "tool".
+   */
+  TOOL_NAME: 'gen_ai.tool.name',
+  TOOL_CALL_ID: 'gen_ai.tool.call.id',
+  TOOL_CALL_ARGUMENTS: 'gen_ai.tool.call.arguments',
 } as const;
