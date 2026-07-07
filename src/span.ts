@@ -4,7 +4,9 @@ import {
   trace as otTrace,
   SpanStatusCode,
   type Context,
+  type Link,
   type Span as OtelSpan,
+  type SpanOptions as OtelSpanOptions,
   type TimeInput,
   type Tracer,
 } from '@opentelemetry/api';
@@ -55,6 +57,14 @@ export interface SpanOptions {
   statusMessage?: string;
   version?: string;
   observationType?: ObservationType;
+  /**
+   * OTel span links to related spans. Use for multi-agent handoffs when an
+   * orchestrator owns the trace: the causal DAG (agent A → agent B) lives in
+   * links rather than the parent chain. Pass each upstream span's `.context`.
+   * Supports fan-in — several upstreams linking into one span (e.g. a judge
+   * that read both a bull and a bear analyst).
+   */
+  links?: Context[];
   /**
    * Tool name for `tool`-type observations (e.g. "geocode"). Emitted as
    * `gen_ai.tool.name` — the backend reads it as the observation's tool name
@@ -141,6 +151,28 @@ interface SpanCtorArgs {
   options?: SpanOptions;
 }
 
+/** Link attribute key + value marking a span link as an agent handoff, so a
+ *  topology consumer can tell handoffs apart from any other use of OTel links
+ *  (batch fan-out, retries, "followed-from", …) rather than inferring it. */
+export const LINK_KIND_ATTR = 'darkhunt.link.kind';
+export const HANDOFF_LINK_KIND = 'agent_handoff';
+
+/** Resolve caller-supplied contexts into OTel span links (valid ones only), each
+ *  tagged as an agent handoff. Accepts both live span contexts (`span.context`)
+ *  and remote contexts extracted from a W3C `traceparent` — the common shape for
+ *  a cross-process agent handoff. */
+export function toOtelLinks(contexts?: Context[]): Link[] {
+  if (!contexts?.length) return [];
+  const links: Link[] = [];
+  for (const c of contexts) {
+    const sc = otTrace.getSpanContext(c);
+    if (sc?.spanId && sc.traceId) {
+      links.push({ context: sc, attributes: { [LINK_KIND_ATTR]: HANDOFF_LINK_KIND } });
+    }
+  }
+  return links;
+}
+
 export class Span {
   protected readonly tracer: Tracer;
   protected readonly traceRef: Trace;
@@ -153,10 +185,14 @@ export class Span {
     this.traceRef = args.trace;
     const parentCtx = args.parentContext ?? otContext.active();
     const opts = args.options ?? {};
+    const otelOptions: OtelSpanOptions = {};
+    if (opts.startTime !== undefined) otelOptions.startTime = opts.startTime;
+    const links = toOtelLinks(opts.links);
+    if (links.length > 0) otelOptions.links = links;
     // Span name lands on the wire verbatim — mask in case user-controlled.
     this.otelSpan = this.tracer.startSpan(
       this.traceRef.maskName(args.name),
-      opts.startTime !== undefined ? { startTime: opts.startTime } : undefined,
+      Object.keys(otelOptions).length > 0 ? otelOptions : undefined,
       parentCtx
     );
     this.ctx = otTrace.setSpan(parentCtx, this.otelSpan);
