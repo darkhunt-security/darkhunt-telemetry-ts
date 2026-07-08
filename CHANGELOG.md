@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   span options emit `gen_ai.tool.name` / `gen_ai.tool.call.id` /
   `gen_ai.tool.call.arguments`, so `tool`-type spans surface the actual tool
   (e.g. "geocode") instead of the generic type.
+- **Span links + agent handoffs.** `trace.handoffToken()` returns a serialisable
+  `HandoffToken` (a W3C `traceparent`) for the trace's root/entry span, and
+  `dh.trace({ handoffFrom })` / `.span({ links })` attach OTel span links to upstream
+  agents — the basis for multi-agent **topology** reconstruction (who handed off to
+  whom). Supports fan-in; links are auto-tagged `darkhunt.link.kind = "agent_handoff"`
+  so consumers can tell handoffs apart from other uses of OTel links.
 
 ### Documentation
 

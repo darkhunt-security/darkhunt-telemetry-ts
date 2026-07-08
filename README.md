@@ -137,6 +137,67 @@ If nothing shows up, the most common causes are: missing `DARKHUNT_API_KEY` in t
 
 Worked examples for each: [full SDK guide](https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript#examples).
 
+## Multi-agent topology (agent handoffs)
+
+If you run **multiple agents that hand off to each other**, Darkhunt reconstructs the
+**agent topology** — a graph of who handed off to whom — plus per-agent cost, models,
+loops, and policy hits. It's built from **OpenTelemetry span links** (standard OTel), so
+any agent that emits a handoff link shows up.
+
+Give **each agent its own `serviceName`** (that's the node identity), then declare handoffs
+with two calls — expose a token upstream, consume it downstream:
+
+```ts
+// Upstream agent — return its handoff token so others can link back to it.
+function research(input) {
+  const trace = dh.trace({ name: 'research', sessionId: input.taskId, userId: input.userId });
+  // ...tool calls / generations...
+  return { facts, handoff: trace.handoffToken() }; // handoff: an opaque, serialisable string
+}
+
+// Downstream agent — declare who handed off to it (fan-in supported).
+function analyst(input, research, quant) {
+  const trace = dh.trace({
+    name: 'analyst',
+    handoffFrom: [research.handoff, quant.handoff], // → draws research→analyst, quant→analyst
+    sessionId: input.taskId,
+    userId: input.userId,
+  });
+  const gen = trace.generation('analyze', { model, usage }); // an LLM call → this node is an "Agent"
+  // ...
+}
+```
+
+- **`trace.handoffToken()`** → a `HandoffToken` (a W3C `traceparent` string) for this agent's
+  **entry span**. Always target this — see best practices.
+- **`dh.trace({ handoffFrom })`** → accepts upstream tokens **or** `Context`s; each becomes an
+  `agent_handoff` span link. Supports **fan-in** (`[a, b, c]`).
+- Thread the token wherever you pass an agent's output as the next agent's input — the handoff
+  rides on your existing data flow. Cross-process (Temporal / queues / HTTP)? The token is a
+  plain string; put it in the workflow arg / message / header.
+
+### What the graph shows — and how each shows up
+
+| You'll see…                                | …when                                                                                                                                             |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent** (reasons; carries model + cost)  | the node emits ≥1 `trace.generation(...)`                                                                                                          |
+| **Worker** (deterministic; no cost)        | the node only calls tools, no generations — it can't be jailbroken/injected, so it's marked distinctly                                             |
+| **`↻ ×N`** self-loop                       | the agent was invoked N>1 times (a retry / N debate rounds) — **automatic** from the invocation count                                              |
+| **`↺` loop** between two agents            | you emit a **back-edge**: on a retry / second pass, add the _prior_ agent to `handoffFrom` (e.g. `verify → remediation`, or `bull ⇄ bear` rebuttals) |
+| per-agent **model + cost**                 | set `model` + `usage` on that agent's `generation()`                                                                                               |
+
+### Best practices
+
+- **Link to the entry span, never a throwaway span.** `handoffToken()` targets the trace's
+  **root span**, which is always exported. A short-lived helper span you `.end()` immediately can
+  be dropped on fast agents, leaving a **dangling link** (missing edge). Always use
+  `handoffToken()` / `handoffFrom` — don't hand-roll a token from a temporary span.
+- **Handoffs are data dependencies, not calls.** An orchestrator that calls every agent renders
+  as a _star_ (the parent chain). The real DAG is "whose output fed whose input" — only your code
+  knows that, so declare it with `handoffFrom`.
+- **You don't tag the links.** The SDK marks each handoff link `darkhunt.link.kind = "agent_handoff"`
+  so the topology tells handoffs apart from other OTel link uses (batch fan-out, "followed-from", …).
+
 ## Configuration
 
 Every option resolves as **constructor argument > env var > default**. The most common subset:
