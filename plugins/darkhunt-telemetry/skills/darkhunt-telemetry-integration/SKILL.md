@@ -5,11 +5,14 @@ description: |
   trace-hub TypeScript SDK) into a Node.js / TypeScript service. Covers: install,
   creating an API key, singleton client setup, trace + generation + span
   emission, backdated `startTime`, graceful shutdown, routing-field discipline
-  (tenantId / workspaceId / applicationId), the masking layer, and the canonical
-  SDK-field-to-trace-hub mapping (what attributes the backend actually reads).
-  Auto-invoke when the user asks about adding LLM tracing, sending spans to
-  Darkhunt trace-hub, integrating Darkhunt observability, or wiring
-  DarkhuntTelemetry / `client.trace()` / `trace.generation()` calls into a service.
+  (tenantId / workspaceId / applicationId), the masking layer, multi-agent topology
+  + agent handoffs (`trace.handoffToken()` / `handoffFrom`, span links, worker-vs-agent,
+  loops & cycles), and the canonical SDK-field-to-trace-hub mapping (what attributes the
+  backend actually reads). Auto-invoke when the user asks about adding LLM tracing,
+  sending spans to Darkhunt trace-hub, integrating Darkhunt observability, wiring
+  DarkhuntTelemetry / `client.trace()` / `trace.generation()` calls, or building a
+  multi-agent system where agents hand off to each other (agent topology / handoff
+  links / loops).
 ---
 
 # Darkhunt telemetry SDK — integration guide
@@ -348,6 +351,63 @@ These add to the span fields above.
 | `completionStartTime`         | `timing.completionStartTime` |
 | `promptName`                  | `prompt.name`                |
 | `promptVersion`               | `prompt.version`             |
+
+## Multi-agent topology & handoffs
+
+When the service is one agent in a **multi-agent system**, the platform reconstructs the
+**agent topology** — who handed off to whom — from **span links** (standard OTel, not a
+proprietary format). Wire it with the handoff helper; without links you only get a _star_
+under the orchestrator, not the real DAG.
+
+**Identity:** one `serviceName` per agent (e.g. `finance.quant`) — that is the topology node.
+
+**Emit a handoff — two calls:**
+
+```ts
+// Upstream agent: expose its entry-span token.
+const trace = dh.trace({ name: 'research-agent', sessionId, userId });
+// ...work...
+const handoff = trace.handoffToken(); // opaque, serialisable string (a W3C traceparent)
+return { ...result, handoff };
+
+// Downstream agent: declare its upstream(s). Fan-in = pass several.
+const trace = dh.trace({
+  name: 'analyst-agent',
+  handoffFrom: [research.handoff, quant.handoff],
+  sessionId,
+  userId,
+});
+```
+
+`handoffFrom` accepts `HandoffToken` strings **or** OTel `Context`s; each becomes an
+`agent_handoff` span link on the trace's **root span**. The orchestrator threads each
+upstream's `handoffToken` into the downstream's `handoffFrom` — wherever it already passes
+that agent's output as the next agent's input. Cross-process (Temporal / queue / HTTP): the
+token is a string, so carry it in the workflow arg / message / header like any other value.
+
+**Emit the right spans so the graph reads correctly:**
+
+- **Agent vs Worker** — a node with ≥1 `generation` span renders as an **Agent** (model, cost,
+  and the AI-risk surface); a tools-only node renders as a **Worker** (no cost, can't be
+  jailbroken/injected). Emit `trace.generation(...)` for every real LLM call.
+- **Per-agent model + cost** — set `model` + `usage` on each `generation`.
+- **Self-loop `↻ ×N`** — automatic. N = the agent's cross-service entry spans (how many times it
+  was invoked). A retry loop or N debate rounds ⇒ N entry spans ⇒ `↻ ×N`.
+- **Cycle `↺` between two agents** — needs a **back-edge**. On a retry / re-review, add the
+  _prior_ agent to the next agent's `handoffFrom` (e.g. the retried `remediation` links to the
+  failed `verify`; each debate `rebuttal` links to the opposing `thesis`). A one-directional flow
+  won't draw a cycle — the back-link does.
+
+**Gotchas (each was a real bug):**
+
+1. **Never link to a throwaway span.** `handoffToken()` targets the always-exported root span. A
+   helper span created and `.end()`-ed immediately gets dropped on fast (sub-second, tool-only)
+   agents → the downstream link dangles → **no edge**. Use `handoffToken()` / `handoffFrom` only.
+2. **Fan-in is `handoffFrom: [a, b, c]`** — a span has one parent but can link to many upstreams.
+3. **Don't infer handoffs from the call graph** — the orchestrator calls everyone (a star).
+   Declare the causal edges yourself via `handoffFrom`.
+4. **You don't set the `darkhunt.link.kind` marker** — the SDK tags handoff links for you. Don't
+   route non-handoff OTel links through `handoffFrom`.
 
 ## Verification
 

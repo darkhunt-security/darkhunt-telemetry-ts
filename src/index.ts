@@ -1,6 +1,6 @@
 export { DarkhuntTelemetry, type DarkhuntTelemetryOptions, type MaskingOptions } from './client.js';
 export { Sanitizer, type CustomPattern } from './masking/index.js';
-export { Trace, type TraceArgs, type TraceUpdateArgs } from './trace.js';
+export { Trace, type TraceArgs, type TraceUpdateArgs, type HandoffToken } from './trace.js';
 export {
   Span,
   Generation,

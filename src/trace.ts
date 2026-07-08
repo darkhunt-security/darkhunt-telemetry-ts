@@ -1,8 +1,10 @@
 import {
+  ROOT_CONTEXT,
   context as otContext,
   trace as otTrace,
   type Context,
   type Span as OtelSpan,
+  type SpanOptions as OtelSpanOptions,
   type TimeInput,
   type Tracer,
 } from '@opentelemetry/api';
@@ -11,11 +13,45 @@ import type { Sanitizer } from './masking/index.js';
 import {
   applyMetadataAttrs,
   Generation,
+  safeJsonStringify,
   Span,
+  toOtelLinks,
   type GenerationOptions,
   type SpanOptions,
 } from './span.js';
-import type { Metadata } from './types.js';
+import type { Metadata, ObservationType } from './types.js';
+
+/**
+ * Opaque, serializable handle to an agent's entry (root) span — a W3C `traceparent`
+ * under the hood. Produce one with {@link Trace.handoffToken} and pass it to a
+ * downstream agent's {@link TraceArgs.handoffFrom} to record the A→B handoff.
+ */
+export type HandoffToken = string;
+
+/** Parse a {@link HandoffToken} back into an OTel context carrying its span context. */
+function tokenToContext(token: HandoffToken): Context | undefined {
+  const parts = token.split('-');
+  if (parts.length < 4) return undefined;
+  const [, traceId, spanId, flags] = parts;
+  if (!traceId || !spanId) return undefined;
+  return otTrace.setSpanContext(ROOT_CONTEXT, {
+    traceId,
+    spanId,
+    traceFlags: Number.parseInt(flags ?? '01', 16) || 1,
+    isRemote: true,
+  });
+}
+
+/** Normalize `handoffFrom` entries (tokens or contexts) into OTel contexts. */
+function toHandoffContexts(handoffFrom?: Array<HandoffToken | Context>): Context[] {
+  if (!handoffFrom?.length) return [];
+  const out: Context[] = [];
+  for (const h of handoffFrom) {
+    const ctx = typeof h === 'string' ? tokenToContext(h) : h;
+    if (ctx) out.push(ctx);
+  }
+  return out;
+}
 
 export interface TraceArgs {
   name?: string;
@@ -49,6 +85,36 @@ export interface TraceArgs {
   release?: string;
   environment?: string;
   /**
+   * OTel span links on the trace **root span** — the upstream agents that handed
+   * off to this one (multi-agent DAG). Pass each upstream span's `.context`, or a
+   * remote context extracted from its `traceparent`. Supports fan-in.
+   */
+  links?: Context[];
+  /**
+   * Upstream agents that handed off to this one — the ergonomic front door for
+   * multi-agent handoff links. Accepts each upstream's {@link Trace.handoffToken}
+   * (a serializable string) or a raw {@link Context}; both become `agent_handoff`
+   * span links on the root span. Supports fan-in. Sugar over {@link TraceArgs.links}.
+   */
+  handoffFrom?: Array<HandoffToken | Context>;
+  /**
+   * Observation type of the trace **root span**. Defaults to `'agent'` — the
+   * root represents the agent/service turn this trace covers. Pass `'attack'`
+   * for red-team traces. (Previously this was hardcoded to `'attack'`.)
+   */
+  observationType?: ObservationType;
+  /**
+   * Input the trace represents — e.g. the task/request the agent received.
+   * Masked and emitted as `darkhunt.observation.input`, so the root span carries
+   * real content instead of being an empty container (which lets the backend
+   * keep it and surfaces it in the timeline). Set the result via `output`,
+   * {@link Trace.update}, or leave it and set it at the end.
+   */
+  input?: unknown;
+  /** Output the trace produced — the agent's result. Masked; emitted as
+   *  `darkhunt.observation.output`. Can also be set later via {@link Trace.update}. */
+  output?: unknown;
+  /**
    * Backdated trace start. Pass the wall-clock start of the work the trace
    * represents (typically `Date.now()` captured before any awaited LLM call)
    * when the trace is opened *after* the work has already begun. Without it,
@@ -73,6 +139,9 @@ export interface TraceUpdateArgs {
   metadata?: Metadata;
   release?: string;
   environment?: string;
+  observationType?: ObservationType;
+  /** Output the trace produced. Masked; emitted as `darkhunt.observation.output`. */
+  output?: unknown;
 }
 
 export class Trace {
@@ -92,6 +161,9 @@ export class Trace {
   private _metadata?: Metadata;
   private _release?: string;
   private _environment?: string;
+  private _observationType: ObservationType;
+  private _input?: unknown;
+  private _output?: unknown;
 
   constructor(tracer: Tracer, args: TraceArgs, sanitizer?: Sanitizer) {
     this.tracer = tracer;
@@ -111,10 +183,17 @@ export class Trace {
     this._metadata = args.metadata;
     this._release = args.release;
     this._environment = args.environment;
+    this._observationType = args.observationType ?? 'agent';
+    this._input = args.input;
+    this._output = args.output;
 
+    const rootOptions: OtelSpanOptions = {};
+    if (args.startTime !== undefined) rootOptions.startTime = args.startTime;
+    const rootLinks = toOtelLinks([...(args.links ?? []), ...toHandoffContexts(args.handoffFrom)]);
+    if (rootLinks.length > 0) rootOptions.links = rootLinks;
     this.rootSpan = tracer.startSpan(
       this.maskName(args.name ?? 'trace'),
-      args.startTime !== undefined ? { startTime: args.startTime } : undefined
+      Object.keys(rootOptions).length > 0 ? rootOptions : undefined
     );
     this.rootContext = otTrace.setSpan(otContext.active(), this.rootSpan);
     this.applyTraceAttrs(this.rootSpan);
@@ -131,6 +210,23 @@ export class Trace {
 
   get name(): string | undefined {
     return this._name;
+  }
+  /** OTel context of the trace's root span — inject as a `traceparent` to let a
+   *  downstream agent link back to this one (a handoff edge). The root span is
+   *  always exported, so the link target is guaranteed resolvable. */
+  get context(): Context {
+    return this.rootContext;
+  }
+  /**
+   * A serializable {@link HandoffToken} for this agent's entry span. Pass it to a
+   * downstream agent's {@link TraceArgs.handoffFrom} to record the handoff as an
+   * `agent_handoff` span link. The root span is always exported, so it resolves.
+   */
+  handoffToken(): HandoffToken {
+    const sc = otTrace.getSpanContext(this.rootContext);
+    if (!sc) return '';
+    const flags = (sc.traceFlags & 0xff).toString(16).padStart(2, '0');
+    return `00-${sc.traceId}-${sc.spanId}-${flags}`;
   }
   get tenantId(): string {
     return this._tenantId;
@@ -202,6 +298,8 @@ export class Trace {
     if (args.metadata !== undefined) this._metadata = args.metadata;
     if (args.release !== undefined) this._release = args.release;
     if (args.environment !== undefined) this._environment = args.environment;
+    if (args.observationType !== undefined) this._observationType = args.observationType;
+    if (args.output !== undefined) this._output = args.output;
     this.applyTraceAttrs(this.rootSpan);
     return this;
   }
@@ -210,8 +308,18 @@ export class Trace {
     this.rootSpan.end(endTime);
   }
 
+  /** Mask + emit an input/output attribute on the root span (mirrors Span.setIo). */
+  private setIo(span: OtelSpan, key: string, value: unknown): void {
+    if (value === null || value === undefined) return;
+    const sanitized = this._sanitizer ? this._sanitizer.sanitizeUnknown(value) : value;
+    span.setAttribute(
+      key,
+      typeof sanitized === 'string' ? sanitized : safeJsonStringify(sanitized)
+    );
+  }
+
   private applyTraceAttrs(span: OtelSpan): void {
-    span.setAttribute(ATTR.OBSERVATION_TYPE, 'attack');
+    span.setAttribute(ATTR.OBSERVATION_TYPE, this._observationType);
     span.setAttribute(ATTR.TENANT_ID, this._tenantId);
     span.setAttribute(ATTR.WORKSPACE_ID, this._workspaceId);
     span.setAttribute(ATTR.APPLICATION_ID, this._applicationId);
@@ -228,5 +336,7 @@ export class Trace {
     if (this._release) span.setAttribute(ATTR.RELEASE, this._release);
     if (this._environment) span.setAttribute(ATTR.ENVIRONMENT, this._environment);
     if (this._metadata) applyMetadataAttrs(span, this._metadata, this._sanitizer);
+    this.setIo(span, ATTR.OBSERVATION_INPUT, this._input);
+    this.setIo(span, ATTR.OBSERVATION_OUTPUT, this._output);
   }
 }
