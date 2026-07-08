@@ -141,62 +141,128 @@ Worked examples for each: [full SDK guide](https://docs.darkhunt.ai/darkhunt-ai-
 
 If you run **multiple agents that hand off to each other**, Darkhunt reconstructs the
 **agent topology** — a graph of who handed off to whom — plus per-agent cost, models,
-loops, and policy hits. It's built from **OpenTelemetry span links** (standard OTel), so
-any agent that emits a handoff link shows up.
+loops, and policy hits. Give **each agent its own `serviceName`** (that's the node identity).
+Two things build the graph: **nesting** (draws the edges) and **handoff tokens** (the data flow).
 
-Give **each agent its own `serviceName`** (that's the node identity), then declare handoffs
-with two calls — expose a token upstream, consume it downstream:
+### 1. Nest each agent's trace under its caller — this is what draws the edges
+
+> **The platform reconstructs the topology from the `parentSpanId` cross-service chain** — each
+> agent's entry span must be a **child of its caller's span**. If every agent opens its own root
+> trace and you only wire span links, the nodes render as **disconnected islands**. So you must nest.
+
+The SDK builds a `TracerProvider` but doesn't register the global OTel context manager/propagator,
+so `context.with()` is a no-op by default. Register them **once**, before creating the client:
 
 ```ts
-// Upstream agent — return its handoff token so others can link back to it.
+// src/otel.ts — run at startup, before src/telemetry.ts loads
+import { context, propagation } from '@opentelemetry/api';
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
+import { W3CTraceContextPropagator } from '@opentelemetry/core';
+
+context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
+propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+```
+
+Then create each agent's trace **inside its caller's context**. The caller's token is its
+`handoffToken()` (a W3C traceparent). `Trace.span()/generation()` parent under the trace's own
+root, so only the root needs the caller's context — a one-line `openTrace` wrapper does it:
+
+```ts
+// src/telemetry.ts
+import { context, propagation } from '@opentelemetry/api';
+import { DarkhuntTelemetry } from '@darkhunt-security/telemetry';
+
+export const dh = new DarkhuntTelemetry();
+
+// Drop-in for dh.trace(args), NESTED under args.handoffFrom[0] (the direct upstream), so the
+// agent's entry span gets a parentSpanId. handoffFrom[1..] stay as extra links (fan-in).
+export function openTrace(args) {
+  const parent = args?.handoffFrom?.[0];
+  if (typeof parent !== 'string' || !parent) return dh.trace(args); // gateway root / disabled
+  const ctx = propagation.extract(context.active(), { traceparent: parent });
+  return context.with(ctx, () => dh.trace(args));
+}
+```
+
+### 2. Thread the handoff tokens along your data flow
+
+Expose a token upstream, consume it downstream. `handoffFrom[0]` is the **parent edge**; the rest
+are **fan-in** links:
+
+```ts
+// Upstream agent — return its handoff token so downstream agents nest under it.
 function research(input) {
-  const trace = dh.trace({ name: 'research', sessionId: input.taskId, userId: input.userId });
-  // ...tool calls / generations...
-  return { facts, handoff: trace.handoffToken() }; // handoff: an opaque, serialisable string
+  const trace = openTrace({ name: 'research', sessionId: input.taskId, userId: input.userId, handoffFrom: input.handoffFrom });
+  // ...tool spans / generations...
+  return { facts, handoff: trace.handoffToken() }; // opaque, serialisable string
 }
 
-// Downstream agent — declare who handed off to it (fan-in supported).
+// Downstream agent — declare who handed off to it.
 function analyst(input, research, quant) {
-  const trace = dh.trace({
+  const trace = openTrace({
     name: 'analyst',
-    handoffFrom: [research.handoff, quant.handoff], // → draws research→analyst, quant→analyst
+    handoffFrom: [research.handoff, quant.handoff], // [0] research → parent edge; quant → fan-in link
     sessionId: input.taskId,
     userId: input.userId,
   });
-  const gen = trace.generation('analyze', { model, usage }); // an LLM call → this node is an "Agent"
+  trace.generation('analyze', { model, startTime }); // an LLM call → this node renders as an "Agent"
   // ...
 }
 ```
 
-- **`trace.handoffToken()`** → a `HandoffToken` (a W3C `traceparent` string) for this agent's
-  **entry span**. Always target this — see best practices.
-- **`dh.trace({ handoffFrom })`** → accepts upstream tokens **or** `Context`s; each becomes an
-  `agent_handoff` span link. Supports **fan-in** (`[a, b, c]`).
-- Thread the token wherever you pass an agent's output as the next agent's input — the handoff
-  rides on your existing data flow. Cross-process (Temporal / queues / HTTP)? The token is a
-  plain string; put it in the workflow arg / message / header.
+Thread the token wherever you pass an agent's output as the next agent's input. Cross-process
+(Temporal / queues / HTTP)? The token is a plain string; put it in the workflow arg / message /
+header. `handoffFrom` also accepts OTel `Context`s, and each entry becomes an `agent_handoff`
+span link (the SDK tags them for you).
+
+### 3. Give the orchestrator/gateway span CONTENT, or its node disappears
+
+The backend keeps only spans with a generation or a **tool** — a contentless root trace is
+dropped, so a gateway that just opens a root and fans out **vanishes** (and its children lose
+their root edge). Emit a **tool span** on it and hand off from *that* span:
+
+```ts
+const root = dh.trace({ name: 'gateway', sessionId, userId });
+const dispatch = root.span('dispatch', { observationType: 'tool', toolName: 'dispatch', input: { task } });
+const handoff = spanHandoff(dispatch); // → pass into the first agent's handoffFrom
+
+// spanHandoff: like handoffToken() but for a child span — build the traceparent from its context.
+import { trace as otTrace } from '@opentelemetry/api';
+export function spanHandoff(span) {
+  const sc = otTrace.getSpanContext(span.context);
+  if (!sc) return '';
+  return `00-${sc.traceId}-${sc.spanId}-${(sc.traceFlags & 0xff).toString(16).padStart(2, '0')}`;
+}
+```
 
 ### What the graph shows — and how each shows up
 
-| You'll see…                               | …when                                                                                                                                                |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Agent** (reasons; carries model + cost) | the node emits ≥1 `trace.generation(...)`                                                                                                            |
-| **Worker** (deterministic; no cost)       | the node only calls tools, no generations — it can't be jailbroken/injected, so it's marked distinctly                                               |
-| **`↻ ×N`** self-loop                      | the agent was invoked N>1 times (a retry / N debate rounds) — **automatic** from the invocation count                                                |
-| **`↺` loop** between two agents           | you emit a **back-edge**: on a retry / second pass, add the _prior_ agent to `handoffFrom` (e.g. `verify → remediation`, or `bull ⇄ bear` rebuttals) |
-| per-agent **model + cost**                | set `model` + `usage` on that agent's `generation()`                                                                                                 |
+| You'll see…                               | …when                                                                                                                                                     |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent** (reasons; carries model + cost) | the node emits ≥1 `trace.generation(...)` — **including "boilerplate" LLM calls**, or their (possibly misplaced) cost stays hidden                          |
+| **Worker** (deterministic; no cost)       | the node only calls tools, no generations — it can't be jailbroken/injected, so it's marked distinctly                                                     |
+| **`↻ ×N`** self-loop                      | the agent was invoked N>1 times (a retry / N rounds) — **automatic** from the invocation count                                                             |
+| **`↺` loop** between two agents           | a genuine **2-agent back-edge**: on a retry / second pass add the _prior_ agent to `handoffFrom` (e.g. `verify → remediation`, or `bull ⇄ bear` rebuttals) |
+| per-agent **model + cost**                | set `model` + `usage` on that agent's `generation()`                                                                                                       |
 
 ### Best practices
 
-- **Link to the entry span, never a throwaway span.** `handoffToken()` targets the trace's
-  **root span**, which is always exported. A short-lived helper span you `.end()` immediately can
-  be dropped on fast agents, leaving a **dangling link** (missing edge). Always use
-  `handoffToken()` / `handoffFrom` — don't hand-roll a token from a temporary span.
-- **Handoffs are data dependencies, not calls.** An orchestrator that calls every agent renders
-  as a _star_ (the parent chain). The real DAG is "whose output fed whose input" — only your code
-  knows that, so declare it with `handoffFrom`.
-- **You don't tag the links.** The SDK marks each handoff link `darkhunt.link.kind = "agent_handoff"`
-  so the topology tells handoffs apart from other OTel link uses (batch fan-out, "followed-from", …).
+- **Nest, don't just link.** Register the OTel globals + use `openTrace` (§1). Span links **alone**
+  leave nodes disconnected — the `parentSpanId` chain is what draws the edges.
+- **Give the orchestrator/gateway span content** (a tool span, §3) or its node is dropped.
+- **Link to the REAL producer, not the orchestrator.** Thread the token where output→input. Linking
+  a downstream agent back to the orchestrator (because it *spawned* it) draws a plausible-but-wrong
+  graph — e.g. an `advisor` that consumes `geodata`'s forecast must link to `geodata`, not the coordinator.
+- **Deep repeated loops → self-loops, NOT per-round back-edges.** For an N-round loop over M agents
+  (e.g. a 12-round panel of 3 reviewers), link **every** round's agents to the SAME stable upstream so
+  they render as clean `↻ ×N` self-loops. Linking each round back to the prior round's output emits a
+  tangle of back-edges. Reserve back-edges for genuine **2-agent** cycles.
+- **Link to the entry span, never a throwaway span.** `handoffToken()` targets the always-exported
+  root span; a short-lived helper span you `.end()` immediately can be dropped → **dangling link**.
+
+> **Reference integration.** The [`temporal-demo`](https://github.com/darkhunt-security) multi-agent
+> example wires all of this across 7 domains (fan-out, fan-in, retry/debate cycles, deep loops) —
+> see its `src/telemetry.ts` (`openTrace`/`spanHandoff`), `src/otel.ts`, and `src/domains/*/workflows/coordinator.ts`.
 
 ## Configuration
 

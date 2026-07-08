@@ -459,63 +459,130 @@ dashboard:
 ## Multi-agent topology & handoffs
 
 When the service is one agent in a **multi-agent system**, the platform reconstructs the
-**agent topology** — who handed off to whom — from **span links** (standard OTel, not a
-proprietary format). Wire it with the handoff helper; without links you only get a _star_
-under the orchestrator, not the real DAG.
+**agent topology** — who handed off to whom. **Identity:** one `serviceName` per agent (e.g.
+`finance.quant`) — that is the topology node.
 
-**Identity:** one `serviceName` per agent (e.g. `finance.quant`) — that is the topology node.
+### ⚠️ The edges come from the `parentSpanId` chain — you MUST nest (verified against the live trace-hub, 2026-07-08)
 
-**Emit a handoff — two calls:**
+> **This is the single most important thing to get right, and the easiest to get wrong.** The
+> deployed trace-hub builds agent→agent edges by walking the **`parentSpanId` cross-service
+> chain** (each agent's entry span must be a **child of its caller's span**). It does **not**
+> draw the graph from `agent_handoff` span links — it stores links but the graph builder uses
+> parent-child. So if each agent opens its **own root trace** and you only wire `handoffFrom`
+> links, **the nodes render as disconnected islands** (real bug we hit: ingestion looked
+> perfect — per-agent generations, tools, models, cost all correct — but the Topology tab
+> showed unconnected cards).
+
+**To connect the graph, NEST each agent's trace under its caller.** Two things are required:
+
+1. **Register the global OTel context manager + propagator yourself.** The SDK builds a
+   `NodeTracerProvider` but never calls `provider.register()`, so the global OTel API has **no**
+   context manager or propagator — `context.with()` is a no-op and every `dh.trace()` starts a
+   fresh root with no parent. Do this ONCE, before any client/trace is created:
+
+   ```ts
+   import { context, propagation } from '@opentelemetry/api';
+   import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
+   import { W3CTraceContextPropagator } from '@opentelemetry/core';
+
+   context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
+   propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+   ```
+
+   (Yes, this means you DO take `@opentelemetry/{api,context-async-hooks,core}` as direct deps.)
+
+2. **Create each agent's trace inside its caller's context**, so the agent's root span gets a
+   `parentSpanId` and shares the caller's `trace_id`. The caller's token is just its
+   `handoffToken()` (a W3C traceparent). `Trace.span()/generation()` parent under the trace's
+   **own** root (`parentContext: this.rootContext`), so ONLY the agent root needs the caller
+   context — a one-liner wrapper does it:
+
+   ```ts
+   // openTrace = drop-in for dh.trace(args), but nested under args.handoffFrom[0].
+   export function openTrace(args) {
+     const parent = args?.handoffFrom?.[0];               // the DIRECT upstream token
+     if (typeof parent !== 'string' || !parent) return dh.trace(args);
+     const ctx = propagation.extract(context.active(), { traceparent: parent });
+     return context.with(ctx, () => dh.trace(args));      // agent root → child of caller
+   }
+   ```
+
+   Use `openTrace(...)` instead of `dh.trace(...)` in every agent. `handoffFrom[0]` becomes the
+   **parent edge** (the topology arrow); any further `handoffFrom` entries stay as supplementary
+   links (fan-in). A whole task then lands in **one trace**, nested — verify with: all of a
+   task's spans share a single `trace_id`.
+
+**Emit the handoff token** the same two-call way (it's what feeds `openTrace`'s parent):
 
 ```ts
 // Upstream agent: expose its entry-span token.
-const trace = dh.trace({ name: 'research-agent', sessionId, userId });
+const trace = openTrace({ name: 'research-agent', sessionId, userId, handoffFrom });
 // ...work...
-const handoff = trace.handoffToken(); // opaque, serialisable string (a W3C traceparent)
-return { ...result, handoff };
+return { ...result, handoff: trace.handoffToken() }; // opaque W3C-traceparent string
 
-// Downstream agent: declare its upstream(s). Fan-in = pass several.
-const trace = dh.trace({
-  name: 'analyst-agent',
-  handoffFrom: [research.handoff, quant.handoff],
-  sessionId,
-  userId,
-});
+// Downstream agent: its DIRECT upstream is handoffFrom[0] (the parent); more = fan-in links.
+const trace = openTrace({ name: 'analyst-agent', handoffFrom: [research.handoff, quant.handoff], sessionId, userId });
 ```
 
-`handoffFrom` accepts `HandoffToken` strings **or** OTel `Context`s; each becomes an
-`agent_handoff` span link on the trace's **root span**. The orchestrator threads each
-upstream's `handoffToken` into the downstream's `handoffFrom` — wherever it already passes
-that agent's output as the next agent's input. Cross-process (Temporal / queue / HTTP): the
-token is a string, so carry it in the workflow arg / message / header like any other value.
+Cross-process (Temporal / queue / HTTP): the token is a string — carry it in the workflow arg /
+message / header. The reference integration is `temporal-demo`
+(`/Users/sergey/proj/darkhunt/temporal-demo`: `src/telemetry.ts` `openTrace`/`spanHandoff`,
+`src/otel.ts` globals, `src/domains/*/workflows/coordinator.ts` threading).
 
-The reference multi-agent integration is `temporal-demo` at
-`/Users/sergey/proj/darkhunt/temporal-demo` (see `src/domains/*/workflows/coordinator.ts`
-for handoff threading, fan-in, and retry/debate cycles).
+### The orchestrator/gateway node needs CONTENT or it disappears
 
-**Emit the right spans so the graph reads correctly:**
+The trace-hub keeps a span only if it has a `generation` (input/outputMessages) **or a `tool`**
+name — otherwise it's dropped (unless it's a cross-service boundary). A gateway/orchestrator that
+opens a **contentless root trace** gets filtered out, so its node vanishes AND its children lose
+their root edge. Fix: emit a **tool span** on it (e.g. a `dispatch` tool span with the task as
+`input`) and hand off from THAT span, not the root — build the token from the span's context:
 
-- **Agent vs Worker** — a node with ≥1 `generation` span renders as an **Agent** (model, cost,
-  and the AI-risk surface); a tools-only node renders as a **Worker** (no cost, can't be
-  jailbroken/injected). Emit `trace.generation(...)` for every real LLM call.
+```ts
+const root = dh.trace({ name, sessionId, userId });
+const dispatch = root.span('dispatch', { observationType: 'tool', toolName: 'dispatch', input: { task } });
+// spanHandoff: like handoffToken() but for a child span (uses otTrace.getSpanContext(span.context)).
+const handoff = spanHandoff(dispatch);   // pass into the first agent's handoffFrom
+```
+
+### Link to the REAL producing agent, not the orchestrator
+
+Thread the token **wherever one agent's output becomes the next agent's input** — that is the
+true data dependency, and it's the edge the graph should show. Linking a downstream agent back to
+the *orchestrator* (because the orchestrator spawned it) yields a plausible-but-WRONG graph. Real
+bug: an `advisor` that consumes the `geodata` agent's forecast was linked to the `coordinator`, so
+it rendered as a parallel sibling of `geodata` instead of downstream of it. Fix: `advisor`'s
+`handoffFrom` = `[geodata.handoff]` → `coordinator → geodata → advisor`.
+
+**Other span rules:**
+
+- **Agent vs Worker** — a node with ≥1 `generation` renders as an **Agent** (model, cost, AI-risk
+  surface); a tools-only node is a **Worker** (no cost). Emit `trace.generation(...)` for EVERY
+  real LLM call — including "boilerplate" ones (e.g. a letter-drafting call) or their cost never
+  surfaces and a misplaced-model cost trap stays hidden.
 - **Per-agent model + cost** — set `model` + `usage` on each `generation`.
-- **Self-loop `↻ ×N`** — automatic. N = the agent's cross-service entry spans (how many times it
-  was invoked). A retry loop or N debate rounds ⇒ N entry spans ⇒ `↻ ×N`.
-- **Cycle `↺` between two agents** — needs a **back-edge**. On a retry / re-review, add the
-  _prior_ agent to the next agent's `handoffFrom` (e.g. the retried `remediation` links to the
-  failed `verify`; each debate `rebuttal` links to the opposing `thesis`). A one-directional flow
-  won't draw a cycle — the back-link does.
+- **Self-loop `↻ ×N`** — automatic. N = the agent's cross-service entry spans (times invoked).
+- **Deep repeated loops → self-loops, NOT per-round back-edges.** For an N-round loop over M agents
+  (e.g. a 12-round consensus panel: 3 specialists + consensus, each firing 12×), link **every**
+  round's agents to the SAME stable upstream (the shared chart) so they render as clean `↻ ×12`
+  self-loops. Do NOT link each round back to the prior round's output — that emits 3×11 back-edges
+  and turns the graph into a tangle. Real bug: doing so made the panel unreadable vs. the clean fan.
+- **Small cycle `↺` between two agents** — here a back-edge IS right: on a retry / re-review add the
+  _prior_ agent to the next agent's `handoffFrom` (retried `remediation` links the failed `verify`;
+  each debate `rebuttal` links the opposing `thesis`). Reserve back-edges for genuine 2-agent
+  cycles; use self-loops for deep repeat loops.
 
 **Gotchas (each was a real bug):**
 
-1. **Never link to a throwaway span.** `handoffToken()` targets the always-exported root span. A
-   helper span created and `.end()`-ed immediately gets dropped on fast (sub-second, tool-only)
-   agents → the downstream link dangles → **no edge**. Use `handoffToken()` / `handoffFrom` only.
-2. **Fan-in is `handoffFrom: [a, b, c]`** — a span has one parent but can link to many upstreams.
-3. **Don't infer handoffs from the call graph** — the orchestrator calls everyone (a star).
-   Declare the causal edges yourself via `handoffFrom`.
-4. **You don't set the `darkhunt.link.kind` marker** — the SDK tags handoff links for you. Don't
-   route non-handoff OTel links through `handoffFrom`.
+1. **Nodes disconnected → you forgot to nest** (register globals + `openTrace`). Links alone don't
+   draw edges on this backend; the `parentSpanId` chain does. See the ⚠️ block above.
+2. **Gateway/orchestrator node missing → its span had no generation/tool content** and was filtered.
+   Give it a `dispatch` tool span and hand off from that span.
+3. **Wrong arrows → linked to the orchestrator instead of the real producer.** Link where output→input.
+4. **Never link to a throwaway span.** `handoffToken()` targets the always-exported root span; a
+   helper span created and `.end()`-ed immediately can be dropped on fast agents → dangling link.
+5. **Fan-in is `handoffFrom: [a, b, c]`** — `[0]` is the parent edge; the rest are links.
+6. **Don't infer handoffs from the call graph** — the orchestrator calls everyone (a star). Declare
+   the causal edges via `handoffFrom`.
 
 ## Verification
 
@@ -559,6 +626,18 @@ will lose the in-memory batch).
    view.
 6. **Forgetting `trace.end()`.** Spans that never end stay open in BSP and
    never get exported. Always pair `client.trace(...)` with `trace.end()`.
+7. **`inputMessages` goes on `generation.update()` — not the `generation()` constructor or
+   `.end()`.** `GenerationOptions`/`GenerationEndOptions` reject `inputMessages` (a `tsc` error).
+   Rule of thumb: `generation(name, { model, modelParameters, startTime })` → `.update({
+   inputMessages, systemInstructions })` (known at start) → `.end({ outputMessages, usage })`
+   (known at finish).
+8. **`Trace.end()` takes no options** — only an optional end time, NOT `{ level, statusMessage }`
+   (also a `tsc` error). To record an error, set `level: 'ERROR'` + `statusMessage` on a **span**
+   or generation, not on the trace.
+9. **Nodes disconnected / gateway node missing / wrong arrows** — see the ⚠️ topology block above.
+   These were the biggest real bugs: you must NEST via `parentSpanId` (register OTel globals +
+   `openTrace`), give the orchestrator a tool span, link to the real producer, and use self-loops
+   (not per-round back-edges) for deep loops.
 
 ## Reference files in attack-discovery
 
