@@ -178,13 +178,13 @@ function analyst(input, research, quant) {
 
 ### What the graph shows — and how each shows up
 
-| You'll see…                                | …when                                                                                                                                             |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Agent** (reasons; carries model + cost)  | the node emits ≥1 `trace.generation(...)`                                                                                                          |
-| **Worker** (deterministic; no cost)        | the node only calls tools, no generations — it can't be jailbroken/injected, so it's marked distinctly                                             |
-| **`↻ ×N`** self-loop                       | the agent was invoked N>1 times (a retry / N debate rounds) — **automatic** from the invocation count                                              |
-| **`↺` loop** between two agents            | you emit a **back-edge**: on a retry / second pass, add the _prior_ agent to `handoffFrom` (e.g. `verify → remediation`, or `bull ⇄ bear` rebuttals) |
-| per-agent **model + cost**                 | set `model` + `usage` on that agent's `generation()`                                                                                               |
+| You'll see…                               | …when                                                                                                                                                |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent** (reasons; carries model + cost) | the node emits ≥1 `trace.generation(...)`                                                                                                            |
+| **Worker** (deterministic; no cost)       | the node only calls tools, no generations — it can't be jailbroken/injected, so it's marked distinctly                                               |
+| **`↻ ×N`** self-loop                      | the agent was invoked N>1 times (a retry / N debate rounds) — **automatic** from the invocation count                                                |
+| **`↺` loop** between two agents           | you emit a **back-edge**: on a retry / second pass, add the _prior_ agent to `handoffFrom` (e.g. `verify → remediation`, or `bull ⇄ bear` rebuttals) |
+| per-agent **model + cost**                | set `model` + `usage` on that agent's `generation()`                                                                                                 |
 
 ### Best practices
 

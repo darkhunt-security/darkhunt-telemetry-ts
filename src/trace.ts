@@ -312,7 +312,10 @@ export class Trace {
   private setIo(span: OtelSpan, key: string, value: unknown): void {
     if (value === null || value === undefined) return;
     const sanitized = this._sanitizer ? this._sanitizer.sanitizeUnknown(value) : value;
-    span.setAttribute(key, typeof sanitized === 'string' ? sanitized : safeJsonStringify(sanitized));
+    span.setAttribute(
+      key,
+      typeof sanitized === 'string' ? sanitized : safeJsonStringify(sanitized)
+    );
   }
 
   private applyTraceAttrs(span: OtelSpan): void {

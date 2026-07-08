@@ -475,7 +475,12 @@ const handoff = trace.handoffToken(); // opaque, serialisable string (a W3C trac
 return { ...result, handoff };
 
 // Downstream agent: declare its upstream(s). Fan-in = pass several.
-const trace = dh.trace({ name: 'analyst-agent', handoffFrom: [research.handoff, quant.handoff], sessionId, userId });
+const trace = dh.trace({
+  name: 'analyst-agent',
+  handoffFrom: [research.handoff, quant.handoff],
+  sessionId,
+  userId,
+});
 ```
 
 `handoffFrom` accepts `HandoffToken` strings **or** OTel `Context`s; each becomes an
