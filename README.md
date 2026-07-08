@@ -192,7 +192,12 @@ are **fan-in** links:
 ```ts
 // Upstream agent — return its handoff token so downstream agents nest under it.
 function research(input) {
-  const trace = openTrace({ name: 'research', sessionId: input.taskId, userId: input.userId, handoffFrom: input.handoffFrom });
+  const trace = openTrace({
+    name: 'research',
+    sessionId: input.taskId,
+    userId: input.userId,
+    handoffFrom: input.handoffFrom,
+  });
   // ...tool spans / generations...
   return { facts, handoff: trace.handoffToken() }; // opaque, serialisable string
 }
@@ -219,11 +224,15 @@ span link (the SDK tags them for you).
 
 The backend keeps only spans with a generation or a **tool** — a contentless root trace is
 dropped, so a gateway that just opens a root and fans out **vanishes** (and its children lose
-their root edge). Emit a **tool span** on it and hand off from *that* span:
+their root edge). Emit a **tool span** on it and hand off from _that_ span:
 
 ```ts
 const root = dh.trace({ name: 'gateway', sessionId, userId });
-const dispatch = root.span('dispatch', { observationType: 'tool', toolName: 'dispatch', input: { task } });
+const dispatch = root.span('dispatch', {
+  observationType: 'tool',
+  toolName: 'dispatch',
+  input: { task },
+});
 const handoff = spanHandoff(dispatch); // → pass into the first agent's handoffFrom
 
 // spanHandoff: like handoffToken() but for a child span — build the traceparent from its context.
@@ -237,9 +246,9 @@ export function spanHandoff(span) {
 
 ### What the graph shows — and how each shows up
 
-| You'll see…                               | …when                                                                                                                                                     |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Agent** (reasons; carries model + cost) | the node emits ≥1 `trace.generation(...)` — **including "boilerplate" LLM calls**, or their (possibly misplaced) cost stays hidden                          |
+| You'll see…                               | …when                                                                                                                                                      |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent** (reasons; carries model + cost) | the node emits ≥1 `trace.generation(...)` — **including "boilerplate" LLM calls**, or their (possibly misplaced) cost stays hidden                         |
 | **Worker** (deterministic; no cost)       | the node only calls tools, no generations — it can't be jailbroken/injected, so it's marked distinctly                                                     |
 | **`↻ ×N`** self-loop                      | the agent was invoked N>1 times (a retry / N rounds) — **automatic** from the invocation count                                                             |
 | **`↺` loop** between two agents           | a genuine **2-agent back-edge**: on a retry / second pass add the _prior_ agent to `handoffFrom` (e.g. `verify → remediation`, or `bull ⇄ bear` rebuttals) |
@@ -251,7 +260,7 @@ export function spanHandoff(span) {
   leave nodes disconnected — the `parentSpanId` chain is what draws the edges.
 - **Give the orchestrator/gateway span content** (a tool span, §3) or its node is dropped.
 - **Link to the REAL producer, not the orchestrator.** Thread the token where output→input. Linking
-  a downstream agent back to the orchestrator (because it *spawned* it) draws a plausible-but-wrong
+  a downstream agent back to the orchestrator (because it _spawned_ it) draws a plausible-but-wrong
   graph — e.g. an `advisor` that consumes `geodata`'s forecast must link to `geodata`, not the coordinator.
 - **Deep repeated loops → self-loops, NOT per-round back-edges.** For an N-round loop over M agents
   (e.g. a 12-round panel of 3 reviewers), link **every** round's agents to the SAME stable upstream so

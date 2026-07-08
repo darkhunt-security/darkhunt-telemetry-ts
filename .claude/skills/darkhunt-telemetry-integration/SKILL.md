@@ -139,6 +139,46 @@ For `tool`-type observations, set **`toolName`** (and optionally `toolCallId` / 
 the span — emitted as `gen_ai.tool.name` / `gen_ai.tool.call.id` / `gen_ai.tool.call.arguments`, the
 fields the backend uses to show the actual tool (e.g. "geocode") rather than the generic type.
 
+### 2b. Create an application (get the `applicationId`)
+
+Every trace needs an `applicationId` — a **workspace-scoped UUID**. Create one (or reuse an existing
+one) before wiring the client.
+
+**CLI path (recommended).** App creation lives in the `darkhunt-cli`'s **MCP tools**, not a bare
+subcommand (the CLI's own commands are `scan` / `playground` / `target init`). The CLI ships an MCP
+server (`darkhunt-cli mcp`) that an AI client (e.g. Claude Code) drives, reusing the credentials from
+`enroll`:
+
+```bash
+# 1. Enroll once in a terminal — keeps your dh- key OUT of the chat transcript.
+#    Tenant is looked up from the key; add --tenant only if the key spans multiple tenants.
+darkhunt-cli enroll --api-key dh-...          # → ~/.darkhunt/credentials.json
+```
+
+```text
+# 2. Point your AI client at `darkhunt-cli mcp`, then (auth reused from enroll):
+darkhunt_status               # confirm auth + tenant + reachable API
+darkhunt_list_workspaces      # → pick your workspaceId (UUID)
+darkhunt_create_application    { workspaceId, name, type: 'OBSERVABILITY', description? }
+                              # → returns the new application's UUID
+darkhunt_list_applications    # (optional) list existing apps + their UUIDs to reuse one
+```
+
+- **`type` defaults to `RED_TEAM`** (a connector-less app for adversarial scanning). For a telemetry
+  app, pass **`type: 'OBSERVABILITY'`** so the app's **Tracing** view is enabled and your spans land in
+  a sensible scope.
+- Put the returned UUID in **`DARKHUNT_APPLICATION_ID`**. In a multi-agent system, one app **per
+  domain/service group** is typical (agents are told apart by `serviceName`) — create one per domain and
+  set e.g. `DARKHUNT_APP_WEATHER=<uuid>`, plumbing the right one into each process's
+  `DARKHUNT_APPLICATION_ID`.
+
+**Dashboard path.** Open **app.darkhunt.ai** → the **Get started / Applications** area → create an
+application (the new-app / RedTeamWizard flow) → copy its `applicationId` (alongside your `tenantId` and
+`workspaceId`). Use this if you'd rather click than script; the CLI/MCP path is better for reproducible,
+multi-app setups.
+
+Either way, `applicationId` + `tenantId` + `workspaceId` are the routing fields the client needs next.
+
 ### 3. Singleton client (process-wide)
 
 **Don't construct `DarkhuntTelemetry` per request.** The SDK registers a
@@ -500,10 +540,10 @@ When the service is one agent in a **multi-agent system**, the platform reconstr
    ```ts
    // openTrace = drop-in for dh.trace(args), but nested under args.handoffFrom[0].
    export function openTrace(args) {
-     const parent = args?.handoffFrom?.[0];               // the DIRECT upstream token
+     const parent = args?.handoffFrom?.[0]; // the DIRECT upstream token
      if (typeof parent !== 'string' || !parent) return dh.trace(args);
      const ctx = propagation.extract(context.active(), { traceparent: parent });
-     return context.with(ctx, () => dh.trace(args));      // agent root → child of caller
+     return context.with(ctx, () => dh.trace(args)); // agent root → child of caller
    }
    ```
 
@@ -521,7 +561,12 @@ const trace = openTrace({ name: 'research-agent', sessionId, userId, handoffFrom
 return { ...result, handoff: trace.handoffToken() }; // opaque W3C-traceparent string
 
 // Downstream agent: its DIRECT upstream is handoffFrom[0] (the parent); more = fan-in links.
-const trace = openTrace({ name: 'analyst-agent', handoffFrom: [research.handoff, quant.handoff], sessionId, userId });
+const trace = openTrace({
+  name: 'analyst-agent',
+  handoffFrom: [research.handoff, quant.handoff],
+  sessionId,
+  userId,
+});
 ```
 
 Cross-process (Temporal / queue / HTTP): the token is a string — carry it in the workflow arg /
@@ -539,16 +584,20 @@ their root edge. Fix: emit a **tool span** on it (e.g. a `dispatch` tool span wi
 
 ```ts
 const root = dh.trace({ name, sessionId, userId });
-const dispatch = root.span('dispatch', { observationType: 'tool', toolName: 'dispatch', input: { task } });
+const dispatch = root.span('dispatch', {
+  observationType: 'tool',
+  toolName: 'dispatch',
+  input: { task },
+});
 // spanHandoff: like handoffToken() but for a child span (uses otTrace.getSpanContext(span.context)).
-const handoff = spanHandoff(dispatch);   // pass into the first agent's handoffFrom
+const handoff = spanHandoff(dispatch); // pass into the first agent's handoffFrom
 ```
 
 ### Link to the REAL producing agent, not the orchestrator
 
 Thread the token **wherever one agent's output becomes the next agent's input** — that is the
 true data dependency, and it's the edge the graph should show. Linking a downstream agent back to
-the *orchestrator* (because the orchestrator spawned it) yields a plausible-but-WRONG graph. Real
+the _orchestrator_ (because the orchestrator spawned it) yields a plausible-but-WRONG graph. Real
 bug: an `advisor` that consumes the `geodata` agent's forecast was linked to the `coordinator`, so
 it rendered as a parallel sibling of `geodata` instead of downstream of it. Fix: `advisor`'s
 `handoffFrom` = `[geodata.handoff]` → `coordinator → geodata → advisor`.
@@ -629,7 +678,7 @@ will lose the in-memory batch).
 7. **`inputMessages` goes on `generation.update()` — not the `generation()` constructor or
    `.end()`.** `GenerationOptions`/`GenerationEndOptions` reject `inputMessages` (a `tsc` error).
    Rule of thumb: `generation(name, { model, modelParameters, startTime })` → `.update({
-   inputMessages, systemInstructions })` (known at start) → `.end({ outputMessages, usage })`
+inputMessages, systemInstructions })` (known at start) → `.end({ outputMessages, usage })`
    (known at finish).
 8. **`Trace.end()` takes no options** — only an optional end time, NOT `{ level, statusMessage }`
    (also a `tsc` error). To record an error, set `level: 'ERROR'` + `statusMessage` on a **span**
