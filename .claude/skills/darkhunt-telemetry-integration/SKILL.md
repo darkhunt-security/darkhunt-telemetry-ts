@@ -58,16 +58,28 @@ Key shapes:
 Node `^18.19.0 || >=20.6.0` (the floor set by its OpenTelemetry deps).
 Before adding the dependency, verify the target project:
 
-- `package.json` has `"type": "module"` (or the project is otherwise ESM,
-  e.g. via `.mts` files). If the project is CommonJS, stop and tell the
-  user the SDK won't `require()` cleanly — they need to migrate to ESM or
-  use dynamic `import()` from a CJS wrapper, neither of which the agent
-  should do silently.
 - `package.json` `engines.node` (or the project's CI matrix) satisfies
   `^18.19.0 || >=20.6.0`. If the project pins an older Node (< 18.19), flag
   it and ask before bumping.
+- **CommonJS is NOT an automatic blocker — check the Node version first.**
+  The SDK is ESM-only, but a CommonJS project (`"type": "commonjs"`,
+  tsconfig `module: commonjs`) can still `require()` / `import` it **on
+  Node ≥ 22.12 (and 23+)**, where Node's `require(ESM)` is on by default —
+  *provided the SDK's `dist` has no top-level await* (it currently doesn't,
+  so a plain `import { DarkhuntTelemetry }` compiled to `require()` loads
+  fine, e.g. under `ts-node` on Node 25). Verified against this exact CJS
+  setup. So:
+    - **Node ≥ 22.12:** proceed even if the project is CommonJS. Don't refuse
+      up front — wire it and *actually run it once* to confirm the load (a
+      no-TLA guarantee isn't forever). Only if the load fails do you need a
+      dynamic-`import()` wrapper or an ESM migration.
+    - **Node < 22.12 AND CommonJS:** *then* the old caution applies —
+      `require()` of the ESM package throws `ERR_REQUIRE_ESM`. Stop and tell
+      the user; they need to migrate to ESM or use dynamic `import()` from a
+      CJS wrapper, neither of which the agent should do silently.
+    - Native `"type": "module"` / `.mts` projects: always fine.
 
-Once both check out:
+Once those check out:
 
 ```bash
 npm install @darkhunt-security/telemetry
@@ -122,12 +134,30 @@ the public endpoint (`internal: false` and `enabled`), the constructor throws:
 `apiKey is required for the public endpoint (pass via options, set
 DARKHUNT_API_KEY, or use internal: true)`.
 
+> **The key, the base URL, and the tenant must all be the same environment.**
+> A `dh-` key is scoped to one environment's tenant (prod / UAT / a dev like
+> seth-dev). A key from one environment sent to another environment's host
+> authenticates against the wrong tenant → **401** (or spans silently routed
+> nowhere). Real trap: a shell with both a prod/UAT key in `~/.zshrc` (e.g.
+> `DARKHUNT_API_KEY_UAT`) *and* a seth-dev key in `~/.darkhunt/credentials.json`
+> — pick the key, `DARKHUNT_BASE_URL`, and `DARKHUNT_TENANT_ID` from the **same**
+> source/environment. When you enroll (step 2b), `~/.darkhunt/credentials.json`
+> holds a matched `{ apiKey, apiBaseUrl, tenantId }` set — prefer that trio
+> together rather than mixing an env-var key with a creds-file base URL.
+
 The base URL defaults to `https://api.darkhunt.ai/trace-hub`; override it via the
 `DARKHUNT_BASE_URL` env var or the `baseUrl` option when pointing at a
 self-hosted / staging / dev trace-hub. **Two rules when you override it:** use the
 **ingest API host** (`api…darkhunt.ai`), not the dashboard (`app…darkhunt.ai`,
 which redirects POSTs → 405); and **keep the `/trace-hub` path** — the exporter
 posts to `{baseUrl}/otlp/t/{tenantId}/v1/traces`, so dropping `/trace-hub` yields 404. Example (dev): `DARKHUNT_BASE_URL=https://api-seth-dev.darkhunt.ai/trace-hub`.
+
+> **Gotcha: the enrolled `credentials.json` `apiBaseUrl` has NO `/trace-hub`
+> suffix.** `~/.darkhunt/credentials.json` stores the bare host (e.g.
+> `https://api-seth-dev.darkhunt.ai`). If you source `DARKHUNT_BASE_URL` from
+> that field you **must append `/trace-hub` yourself** — otherwise the exporter
+> POSTs to `{host}/otlp/...` and gets a 404. (i.e. `DARKHUNT_BASE_URL =
+> "$(jq -r .apiBaseUrl ~/.darkhunt/credentials.json)/trace-hub"`.)
 
 Set **`serviceName`** (option, or `DARKHUNT_SERVICE_NAME` / `OTEL_SERVICE_NAME`) to the OTel
 Resource `service.name`. The backend records it per span, so in a multi-service / multi-agent
@@ -141,27 +171,52 @@ fields the backend uses to show the actual tool (e.g. "geocode") rather than the
 
 ### 2b. Create an application (get the `applicationId`)
 
-Every trace needs an `applicationId` — a **workspace-scoped UUID**. Create one (or reuse an existing
-one) before wiring the client.
+Every trace needs an `applicationId` — a **workspace-scoped UUID**. **Create a new, dedicated
+OBSERVABILITY application for this integration** before wiring the client. **Do not reuse an
+existing `applicationId`** — mixing a fresh integration's traces into someone else's / a
+pre-existing app pollutes that app's scope and makes the new traces hard to find. (The only time
+to reuse is when the user explicitly points you at a specific existing app to send to.)
 
-**CLI path (recommended).** App creation lives in the `darkhunt-cli`'s **MCP tools**, not a bare
-subcommand (the CLI's own commands are `scan` / `playground` / `target init`). The CLI ships an MCP
-server (`darkhunt-cli mcp`) that an AI client (e.g. Claude Code) drives, reusing the credentials from
-`enroll`:
+> **Tool precedence: Darkhunt MCP → `darkhunt-cli` → raw REST (last resort).** Reach for the
+> **Darkhunt MCP first**, at the very start of the task — it's the intended, supported interface
+> and reuses enrolled credentials. **We highly recommend installing the `darkhunt-cli` for a smooth
+> integration** — it isn't just a fallback: it's what `enroll`s your credentials
+> (`~/.darkhunt/credentials.json`) *and* serves the MCP itself (`darkhunt-cli mcp`), so it underpins
+> the whole MCP-first path. Only if the MCP is unavailable, use the `darkhunt-cli` directly; only if
+> *both* are unavailable should you fall back to hitting the `…/workflow-manager/api/…` REST
+> endpoints with curl. **Don't silently drop to raw REST** because listing/creating an app "seems
+> easier" — that's off-pattern and brittle. If neither MCP nor CLI is reachable, say so and ask
+> before curling the API directly.
+
+**MCP path (primary — do this first).** App creation lives in the Darkhunt **MCP tools**, not a bare
+`darkhunt-cli` subcommand (the CLI's own commands are `enroll` / `scan` / `corpus` / `datasets` /
+`attack-libraries` / `target` / `playground` / `update` / `mcp` — none of them create an app). The CLI
+ships the MCP server (`darkhunt-cli mcp`) that an AI client (e.g. Claude Code) drives, reusing the
+credentials from `enroll`.
+
+**Check the MCP is connected before anything else.** In Claude Code, look for `darkhunt_*` tools; if
+they're absent, the server isn't registered in this session. **Offer to wire it up** rather than
+routing around it:
 
 ```bash
-# 1. Enroll once in a terminal — keeps your dh- key OUT of the chat transcript.
-#    Tenant is looked up from the key; add --tenant only if the key spans multiple tenants.
+# One-time terminal step — keeps your dh- key OUT of the chat transcript.
+# Tenant is looked up from the key; add --tenant only if the key spans multiple tenants.
 darkhunt-cli enroll --api-key dh-...          # → ~/.darkhunt/credentials.json
+
+# Register the MCP server for the project (then RELOAD the session — MCP tools
+# load at startup, so the darkhunt_* tools appear only after a restart):
+claude mcp add darkhunt -- darkhunt-cli mcp
 ```
 
+Once the `darkhunt_*` tools are available (auth reused from enroll):
+
 ```text
-# 2. Point your AI client at `darkhunt-cli mcp`, then (auth reused from enroll):
 darkhunt_status               # confirm auth + tenant + reachable API
 darkhunt_list_workspaces      # → pick your workspaceId (UUID)
 darkhunt_create_application    { workspaceId, name, type: 'OBSERVABILITY', description? }
-                              # → returns the new application's UUID
-darkhunt_list_applications    # (optional) list existing apps + their UUIDs to reuse one
+                              # → returns the NEW application's UUID (use this)
+darkhunt_list_applications    # only to sanity-check naming / avoid a duplicate — NOT to grab
+                              # and reuse a random existing app's UUID
 ```
 
 - **`type` defaults to `RED_TEAM`** (a connector-less app for adversarial scanning). For a telemetry
@@ -172,12 +227,13 @@ darkhunt_list_applications    # (optional) list existing apps + their UUIDs to r
   set e.g. `DARKHUNT_APP_WEATHER=<uuid>`, plumbing the right one into each process's
   `DARKHUNT_APPLICATION_ID`.
 
-**Dashboard path.** Open **app.darkhunt.ai** → the **Get started / Applications** area → create an
-application (the new-app / RedTeamWizard flow) → copy its `applicationId` (alongside your `tenantId` and
-`workspaceId`). Use this if you'd rather click than script; the CLI/MCP path is better for reproducible,
-multi-app setups.
+**Dashboard path (fallback if MCP+CLI are both unavailable).** Open **app.darkhunt.ai** → the **Get
+started / Applications** area → create a **new** application (the new-app / RedTeamWizard flow) → copy
+its `applicationId` (alongside your `tenantId` and `workspaceId`). Use this if you'd rather click than
+script; the MCP path is better for reproducible, multi-app setups.
 
-Either way, `applicationId` + `tenantId` + `workspaceId` are the routing fields the client needs next.
+Either way, the **newly created** `applicationId` + `tenantId` + `workspaceId` are the routing fields
+the client needs next.
 
 ### 3. Singleton client (process-wide)
 
@@ -302,6 +358,30 @@ trace.end();
 finishes. You can pass everything to `end()` if there's no streaming
 intermediate state to record.
 
+**Strict-TypeScript projects: two `tsc` errors the snippets above can trigger.**
+Many host projects compile with `exactOptionalPropertyTypes` and
+`noPropertyAccessFromIndexSignature` (both on in the Anthropic SDK repo, for
+example). Two adjustments keep the integration clean:
+
+- **`exactOptionalPropertyTypes` rejects assigning `undefined` to an optional
+  field.** So `usage: { input_tokens, output_tokens, cache_read_tokens:
+maybeUndefined }` fails to typecheck — build the object and add the optional
+  cache fields **conditionally** instead of assigning `undefined`:
+
+  ```ts
+  const usage: {
+    input_tokens: number; output_tokens: number;
+    cache_read_tokens?: number; cache_creation_tokens?: number;
+  } = { input_tokens: u.input_tokens, output_tokens: u.output_tokens };
+  if (u.cache_read_input_tokens != null) usage.cache_read_tokens = u.cache_read_input_tokens;
+  if (u.cache_creation_input_tokens != null) usage.cache_creation_tokens = u.cache_creation_input_tokens;
+  generation.end({ model, outputMessages, usage });
+  ```
+
+- **`noPropertyAccessFromIndexSignature` forbids dotted access on `process.env`.**
+  Read env vars with bracket syntax: `process.env['NODE_ENV']`, not
+  `process.env.NODE_ENV`.
+
 ## Routing fields
 
 Every span carries three required routing attributes — `tenantId`,
@@ -408,6 +488,18 @@ drop the rest" pattern.
 Spans nest naturally — `parent.span(...)` makes the child a child in the
 trace tree.
 
+### Recipe: non-chat provider calls → observation types
+
+The table above is generic; here's the worked mapping for the common non-chat
+calls in an SDK-examples repo (verified against the OpenAI SDK):
+
+| Provider call                                  | Observation                                                    | Notes                                                                                     |
+| ---------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Embeddings                                     | `trace.span(name, { observationType: 'embedding' })`          | A span has **no** `model` / `usage` field — put the model name + token count in `metadata` |
+| Content moderation                             | `trace.span(name, { observationType: 'guardrail' })`          | Set `level: 'WARNING'` + `statusMessage` **only when flagged**; omit `level` otherwise     |
+| Image generation (DALL·E etc.)                 | `trace.generation(name, { model, input: prompt })`            | It produces content → a generation; `output` = the image URL; **no `usage`** to send       |
+| Management / async calls (assistant create, fine-tune job, batch submit/retrieve) | `trace.span(name, { observationType: 'tool', toolName })` | These don't run inference themselves (the work is async) — record them as tool spans        |
+
 ## Supported fields — SDK ↔ trace-hub mapping
 
 This is the canonical list of what the SDK can emit and what trace-hub
@@ -450,7 +542,7 @@ Set on `trace.span(name, opts)` / `trace.generation(name, opts)` / via
 | `observationType` | `darkhunt.observation.type`           | `span.type`                      | one of `span` / `tool` / `agent` / `generation` / `event` / `chain` / `retriever` / `evaluator` / `embedding` / `guardrail` |
 | `input`           | `darkhunt.observation.input`          | `content.input`                  | masked; objects walked recursively                                                                                          |
 | `output`          | `darkhunt.observation.output`         | `content.output`                 | masked                                                                                                                      |
-| `level`           | `darkhunt.observation.level`          | `span.level`                     | `'DEFAULT'` / `'DEBUG'` / `'WARNING'` / `'ERROR'`                                                                           |
+| `level`           | `darkhunt.observation.level`          | `span.level`                     | SDK `ObservationLevel` = `'DEBUG'` / `'INFO'` / `'WARNING'` / `'ERROR'` (NOT `'DEFAULT'`). **Omit** `level` to get the backend's default; passing `'DEFAULT'` is not a valid SDK value. |
 | `statusMessage`   | OTel `setStatus({ message })`         | `error.message` (`_span_status`) | masked; sets ERROR status when paired with `level: 'ERROR'`                                                                 |
 | `version`         | `darkhunt.version`                    | `span.version`                   |                                                                                                                             |
 | `metadata`        | `darkhunt.observation.metadata.<key>` | `span.metadata.<key>`            | one OTel attr per key — never a single JSON blob (backend can't iterate)                                                    |
@@ -476,6 +568,13 @@ These add to the span fields above.
 | `promptName`                  | `darkhunt.observation.prompt.name`                                        | `prompt.name`                |
 | `promptVersion`               | `darkhunt.observation.prompt.version`                                     | `prompt.version`             |
 
+> **You usually don't need to pass `cost`.** trace-hub auto-prices a generation
+> from `model` + `usage` for known models — send an accurate `model` and
+> `usage.{input,output,cache_*}_tokens` and the dashboard shows a computed dollar
+> cost (verified: a generation sent with usage but *no* `cost` rendered `$0.0002`).
+> Only set `cost` explicitly for custom / self-hosted / unpriced models the
+> backend can't price on its own.
+
 ### Known gaps (backend reads, SDK doesn't yet emit)
 
 Don't try to use these from SDK code — there's no public API. If the user
@@ -495,6 +594,78 @@ dashboard:
 - `darkhunt.status_message` — set by SDK alongside `setStatus({ message })`,
   but the YAML mapping reads only `_span_status` (the OTel native). The
   redundant attr is dead weight today.
+
+## Instrumenting a sample / OSS / multi-script repo
+
+The reference integration (`attack-discovery`) is a single always-configured
+service. A **public SDK-examples / quickstart repo** is a different archetype —
+it must still run for a user who has *no* Darkhunt account, and it's usually a
+folder of many independent one-shot entry scripts rather than one server. Two
+patterns make that clean.
+
+### Opt-in / graceful degradation — never crash the host app
+
+The client is **not** safe to construct unconditionally here: on the public
+endpoint the constructor **throws** if `apiKey` is missing, and `dh.trace()`
+**throws** if any routing field is missing. So a bare `new DarkhuntTelemetry()`
+in a sample script breaks `node examples/foo.js` for anyone who just wants to
+try the underlying SDK. Gate on config presence and no-op when absent:
+
+```ts
+const REQUIRED = ['DARKHUNT_API_KEY', 'DARKHUNT_TENANT_ID', 'DARKHUNT_WORKSPACE_ID', 'DARKHUNT_APPLICATION_ID'];
+const enabled = process.env['DARKHUNT_ENABLED'] !== 'false' && REQUIRED.every((k) => !!process.env[k]);
+
+// Returns null when unconfigured; callers optional-chain so the demo still runs.
+export function startTrace(name, args) {
+  if (!enabled) return null;
+  return getClient().trace({ name, ...args });
+}
+```
+
+Then every call site uses optional chaining and the OpenAI/Anthropic demo runs
+untouched when Darkhunt isn't set up:
+
+```ts
+const startTime = Date.now();
+const trace = startTrace('chat.basic');
+const gen = trace?.generation('answer', { model, startTime });
+gen?.update({ inputMessages });
+// ...real LLM call...
+gen?.end({ model, outputMessages, usage });
+trace?.end();
+await flushTelemetry(); // no-op when disabled
+```
+
+### One service.name per example script
+
+The OTel Resource (`service.name`) is **per-`TracerProvider`, i.e. per process**
+— and each example is its own process. So derive a distinct `serviceName` from
+the entry script and every example becomes its own topology node, with **zero**
+per-file edits:
+
+```ts
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
+
+function deriveServiceName() {
+  if (process.env['DARKHUNT_SERVICE_NAME']) return process.env['DARKHUNT_SERVICE_NAME'];
+  const entry = process.argv[1];
+  if (!entry) return 'my-sdk-examples';               // e.g. `node -e ...` → argv[1] is undefined
+  const rel = path.relative(ROOT, entry);
+  if (!rel || rel.startsWith('..')) return 'my-sdk-examples';
+  const parts = rel.replace(/\.[cm]?js$/i, '').split(path.sep).filter((s) => s && s !== 'index');
+  return ['my-sdk-examples', ...parts].join('.');      // chat/vision.js → my-sdk-examples.chat.vision
+}
+```
+
+Two things to know: these nodes are **independent by design** — each script
+opens its own root trace with no handoffs, so they render as disconnected
+islands (that's correct; they're unrelated demos, not a multi-agent graph). And
+a node only appears **after it has emitted at least one trace** — a service with
+zero spans shows up nowhere, so "I don't see my other examples" just means those
+scripts haven't run yet. (These are all still **one application** — the split is
+`service.name`, not `applicationId`.)
 
 ## Multi-agent topology & handoffs
 
@@ -643,7 +814,31 @@ npm run test              # if integration has unit-test coverage
 ```
 
 Then exercise a real path that emits a span and check trace-hub for the
-incoming trace. The dashboard should show:
+incoming trace.
+
+> **The Darkhunt MCP cannot read traces back — don't promise a server-side
+> confirmation you can't do.** The MCP toolset is red-team oriented
+> (`scan` / `playground` / `targets` / `policies` / `datasets` / `corpora` / app
+> + workspace management) — there is **no tracing-query / read-trace tool**. So
+> from the agent side you have exactly two checks: **(1)** the curl empty-body
+> probe below, which confirms **auth + routing only** (a 400), and **(2)** the
+> human opening the dashboard. There is no API to assert "span X landed." Tell
+> the user that final confirmation is theirs to eyeball; don't claim you verified
+> ingestion programmatically.
+
+> **Verify through the real integration, not a throwaway probe script.** A probe
+> that emits a span under a *different* `serviceName` (e.g. `ingest-verify`) mints
+> a **whole separate node in the Topology view** — and it renders as its own Agent
+> with a `↻ ×N` self-loop for each time you ran it. There's no delete-trace API, so
+> that node is **permanent noise** in the OBSERVABILITY app (verified this run: a
+> `ingest-verify` probe left a standing `↻ ×2` agent card next to the real one).
+> Prefer the two clean checks: **(1)** the curl endpoint probe above (server-side,
+> emits nothing), and **(2)** running the *actual* instrumented code path and
+> reading its node. If you truly must emit a span from a script, give it the
+> **same `serviceName` as the real integration** so it folds into that node
+> instead of creating a phantom agent.
+
+The dashboard should show:
 
 - One trace per `assessmentRunId` (sessionId-grouped)
 - Each generation showing `inputMessages` / `outputMessages` rendered as
@@ -652,10 +847,46 @@ incoming trace. The dashboard should show:
   visible on the span detail panel
 - Token usage / model name / cost on generation spans
 
+> **A clean `flush()` / `shutdown()` is NOT proof the span was ingested.** The
+> BatchSpanProcessor exports in the background and **swallows export failures**
+> — a 401 (wrong-environment key), 404 (missing `/trace-hub`), or dropped batch
+> surfaces only on the OTel **diag** channel, never as a thrown error. So "the
+> script ran without throwing" tells you nothing about ingestion. To confirm
+> server-side without the dashboard, probe the exact ingest endpoint the
+> exporter uses and read the HTTP status:
+>
+> ```bash
+> # good key + routing + (empty body) → 400  (reached the handler: auth+routing OK)
+> # wrong/absent key                  → 401  (auth failed — check key↔environment)
+> # missing /trace-hub in baseUrl      → 404  (routing/path wrong)
+> curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+>   -H "Authorization: Bearer $DARKHUNT_API_KEY" \
+>   -H 'Content-Type: application/x-protobuf' \
+>   -H "X-Workspace-Id: $DARKHUNT_WORKSPACE_ID" \
+>   -H "X-Application-Id: $DARKHUNT_APPLICATION_ID" \
+>   --data-binary '' \
+>   "$DARKHUNT_BASE_URL/otlp/t/$DARKHUNT_TENANT_ID/v1/traces"
+> ```
+>
+> A **400 on the empty-body probe is the success signal** (the request
+> authenticated and routed; only the empty protobuf was rejected — the real SDK
+> payload would be a 2xx). This curl probe is the **reliable** server-side check.
+>
+> **Don't count on the in-process OTel diag logger for a success signal.**
+> Registering `diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.DEBUG)`
+> before constructing the client sounds like it should print the export result,
+> but with the current exporter stack (`@opentelemetry/otlp-transformer` 0.218 /
+> `sdk-trace` 2.9, verified) it emits **only** the `Registered a global for diag`
+> line and **nothing on a successful export** — the OTLP exporter is silent on
+> 2xx and logs only on error. A quiet diag channel therefore proves nothing about
+> ingestion; treat its silence as "no error seen," not "span landed." Confirm with
+> the curl probe above or the dashboard, not the diag logger.
+
 If spans don't appear: check (1) routing fields are populated, (2) baseUrl
-points at the right environment, (3) for `internal: false`, the apiKey is
-valid, (4) the process actually exits gracefully so `flush()` runs (a `kill -9`
-will lose the in-memory batch).
+points at the right environment **and ends in `/trace-hub`**, (3) for
+`internal: false`, the apiKey is valid **and belongs to the same environment as
+the baseUrl/tenant** (a wrong-env key → 401), (4) the process actually exits
+gracefully so `flush()` runs (a `kill -9` will lose the in-memory batch).
 
 ## Common pitfalls
 
@@ -687,6 +918,12 @@ inputMessages, systemInstructions })` (known at start) → `.end({ outputMessage
    These were the biggest real bugs: you must NEST via `parentSpanId` (register OTel globals +
    `openTrace`), give the orchestrator a tool span, link to the real producer, and use self-loops
    (not per-round back-edges) for deep loops.
+10. **Reusing an existing app / reaching for raw REST.** Two setup mistakes from a real run
+    (see step 2b): (a) grabbing a pre-existing `applicationId` instead of **creating a new,
+    dedicated OBSERVABILITY app** — the integration's traces end up in the wrong scope; (b)
+    listing/creating apps by curling `…/workflow-manager/api/…` when the **Darkhunt MCP** (or, failing
+    that, `darkhunt-cli`) is the intended interface. Use the MCP first; if it isn't connected, offer
+    to wire it up — don't silently route around it to raw REST.
 
 ## Reference files in attack-discovery
 
