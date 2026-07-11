@@ -5,6 +5,7 @@ import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic
 import pkg from '../package.json' with { type: 'json' };
 import { DarkhuntSpanExporter } from './exporter.js';
 import { Sanitizer, type CustomPattern } from './masking/index.js';
+import { registerOtelContextGlobals } from './otel-globals.js';
 import { Trace, type TraceArgs } from './trace.js';
 
 const LIB_NAME = 'darkhunt-telemetry';
@@ -82,6 +83,16 @@ export interface DarkhuntTelemetryOptions {
   /** Client-side data masking. Enabled by default. */
   mask?: MaskingOptions;
   /**
+   * Register the global OTel context manager + W3C propagator so `context.with(...)`
+   * nests spans (required for cross-service / multi-agent trace stitching). Enabled
+   * by default. Set `false` (or `DARKHUNT_REGISTER_CONTEXT_MANAGER=false`) only if
+   * your app already registers its own OTel context manager. The SDK never registers
+   * its TracerProvider globally, so this touches only the context plumbing — it will
+   * not override a context manager the host already installed. See
+   * {@link registerOtelContextGlobals}.
+   */
+  registerContextManager?: boolean;
+  /**
    * Default routing fields applied to every trace from this client. Set them
    * once here and {@link DarkhuntTelemetry.trace} calls only need to pass
    * what's actually variable (typically just `assessmentRunId`, `sessionId`,
@@ -156,6 +167,13 @@ export class DarkhuntTelemetry {
       LIB_NAME;
 
     if (this._enabled) {
+      // Ensure `context.with()` actually nests spans — the SDK doesn't register its
+      // TracerProvider globally, so without this cross-service spans never nest.
+      const registerCtx =
+        options.registerContextManager ??
+        (process.env.DARKHUNT_REGISTER_CONTEXT_MANAGER ?? 'true').toLowerCase() !== 'false';
+      if (registerCtx) registerOtelContextGlobals();
+
       this.setupProvider({
         baseUrl,
         apiKey,

@@ -1,6 +1,7 @@
 import {
   ROOT_CONTEXT,
   context as otContext,
+  propagation,
   trace as otTrace,
   type Context,
   type Span as OtelSpan,
@@ -15,6 +16,7 @@ import {
   Generation,
   safeJsonStringify,
   Span,
+  spanContextToToken,
   toOtelLinks,
   type GenerationOptions,
   type SpanOptions,
@@ -28,8 +30,13 @@ import type { Metadata, ObservationType } from './types.js';
  */
 export type HandoffToken = string;
 
-/** Parse a {@link HandoffToken} back into an OTel context carrying its span context. */
+/** Parse a {@link HandoffToken} back into an OTel context carrying its span context —
+ *  via the global propagator (`propagation.extract`), symmetric with the inject on the
+ *  producing side. Falls back to direct parsing only if no global propagator is set. */
 function tokenToContext(token: HandoffToken): Context | undefined {
+  const ctx = propagation.extract(ROOT_CONTEXT, { traceparent: token });
+  const sc = otTrace.getSpanContext(ctx);
+  if (sc?.traceId && sc?.spanId) return ctx;
   const parts = token.split('-');
   if (parts.length < 4) return undefined;
   const [, traceId, spanId, flags] = parts;
@@ -223,10 +230,7 @@ export class Trace {
    * `agent_handoff` span link. The root span is always exported, so it resolves.
    */
   handoffToken(): HandoffToken {
-    const sc = otTrace.getSpanContext(this.rootContext);
-    if (!sc) return '';
-    const flags = (sc.traceFlags & 0xff).toString(16).padStart(2, '0');
-    return `00-${sc.traceId}-${sc.spanId}-${flags}`;
+    return spanContextToToken(otTrace.getSpanContext(this.rootContext));
   }
   get tenantId(): string {
     return this._tenantId;

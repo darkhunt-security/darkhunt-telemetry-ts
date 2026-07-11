@@ -65,19 +65,19 @@ Before adding the dependency, verify the target project:
   The SDK is ESM-only, but a CommonJS project (`"type": "commonjs"`,
   tsconfig `module: commonjs`) can still `require()` / `import` it **on
   Node ≥ 22.12 (and 23+)**, where Node's `require(ESM)` is on by default —
-  *provided the SDK's `dist` has no top-level await* (it currently doesn't,
+  _provided the SDK's `dist` has no top-level await_ (it currently doesn't,
   so a plain `import { DarkhuntTelemetry }` compiled to `require()` loads
   fine, e.g. under `ts-node` on Node 25). Verified against this exact CJS
   setup. So:
-    - **Node ≥ 22.12:** proceed even if the project is CommonJS. Don't refuse
-      up front — wire it and *actually run it once* to confirm the load (a
-      no-TLA guarantee isn't forever). Only if the load fails do you need a
-      dynamic-`import()` wrapper or an ESM migration.
-    - **Node < 22.12 AND CommonJS:** *then* the old caution applies —
-      `require()` of the ESM package throws `ERR_REQUIRE_ESM`. Stop and tell
-      the user; they need to migrate to ESM or use dynamic `import()` from a
-      CJS wrapper, neither of which the agent should do silently.
-    - Native `"type": "module"` / `.mts` projects: always fine.
+  - **Node ≥ 22.12:** proceed even if the project is CommonJS. Don't refuse
+    up front — wire it and _actually run it once_ to confirm the load (a
+    no-TLA guarantee isn't forever). Only if the load fails do you need a
+    dynamic-`import()` wrapper or an ESM migration.
+  - **Node < 22.12 AND CommonJS:** _then_ the old caution applies —
+    `require()` of the ESM package throws `ERR_REQUIRE_ESM`. Stop and tell
+    the user; they need to migrate to ESM or use dynamic `import()` from a
+    CJS wrapper, neither of which the agent should do silently.
+  - Native `"type": "module"` / `.mts` projects: always fine.
 
 Once those check out:
 
@@ -85,14 +85,25 @@ Once those check out:
 npm install @darkhunt-security/telemetry
 ```
 
-Pin a recent published build in `package.json`:
+**Where the package lives.** It's the scoped package `@darkhunt-security/telemetry`,
+published to **GitHub Packages** — browse published versions / builds at
+<https://github.com/darkhunt-security/darkhunt-telemetry-ts/pkgs/npm/telemetry>. It also
+resolves from the default public npm registry (`npm install` above works with no
+`.npmrc` scope config — verified). If a consumer is pinned to GitHub Packages instead,
+they'll have a `@darkhunt-security:registry=https://npm.pkg.github.com` line in `.npmrc`.
 
-```json
-"@darkhunt-security/telemetry": "^0.5.0-build.18"
+**Don't hardcode a version from this doc — look up the current one.** Builds ship
+continuously (the `-build.N` suffix is the CI run), so any number written here goes stale.
+Get the latest from the source of truth and pin what you actually installed:
+
+```bash
+npm view @darkhunt-security/telemetry version   # → current published build to pin
+# or browse the GitHub Packages page linked above
 ```
 
-(Match whatever version the user's organisation publishes through CI; the
-`-build.N` suffix reflects the CI run.)
+Then pin exactly that in `package.json`, e.g. `"@darkhunt-security/telemetry":
+"^<version-from-above>"`. Match whatever version the user's organisation publishes through
+CI.
 
 ### 2. Get an API key
 
@@ -139,7 +150,7 @@ DARKHUNT_API_KEY, or use internal: true)`.
 > seth-dev). A key from one environment sent to another environment's host
 > authenticates against the wrong tenant → **401** (or spans silently routed
 > nowhere). Real trap: a shell with both a prod/UAT key in `~/.zshrc` (e.g.
-> `DARKHUNT_API_KEY_UAT`) *and* a seth-dev key in `~/.darkhunt/credentials.json`
+> `DARKHUNT_API_KEY_UAT`) _and_ a seth-dev key in `~/.darkhunt/credentials.json`
 > — pick the key, `DARKHUNT_BASE_URL`, and `DARKHUNT_TENANT_ID` from the **same**
 > source/environment. When you enroll (step 2b), `~/.darkhunt/credentials.json`
 > holds a matched `{ apiKey, apiBaseUrl, tenantId }` set — prefer that trio
@@ -157,7 +168,7 @@ posts to `{baseUrl}/otlp/t/{tenantId}/v1/traces`, so dropping `/trace-hub` yield
 > `https://api-seth-dev.darkhunt.ai`). If you source `DARKHUNT_BASE_URL` from
 > that field you **must append `/trace-hub` yourself** — otherwise the exporter
 > POSTs to `{host}/otlp/...` and gets a 404. (i.e. `DARKHUNT_BASE_URL =
-> "$(jq -r .apiBaseUrl ~/.darkhunt/credentials.json)/trace-hub"`.)
+"$(jq -r .apiBaseUrl ~/.darkhunt/credentials.json)/trace-hub"`.)
 
 Set **`serviceName`** (option, or `DARKHUNT_SERVICE_NAME` / `OTEL_SERVICE_NAME`) to the OTel
 Resource `service.name`. The backend records it per span, so in a multi-service / multi-agent
@@ -181,9 +192,9 @@ to reuse is when the user explicitly points you at a specific existing app to se
 > **Darkhunt MCP first**, at the very start of the task — it's the intended, supported interface
 > and reuses enrolled credentials. **We highly recommend installing the `darkhunt-cli` for a smooth
 > integration** — it isn't just a fallback: it's what `enroll`s your credentials
-> (`~/.darkhunt/credentials.json`) *and* serves the MCP itself (`darkhunt-cli mcp`), so it underpins
+> (`~/.darkhunt/credentials.json`) _and_ serves the MCP itself (`darkhunt-cli mcp`), so it underpins
 > the whole MCP-first path. Only if the MCP is unavailable, use the `darkhunt-cli` directly; only if
-> *both* are unavailable should you fall back to hitting the `…/workflow-manager/api/…` REST
+> _both_ are unavailable should you fall back to hitting the `…/workflow-manager/api/…` REST
 > endpoints with curl. **Don't silently drop to raw REST** because listing/creating an app "seems
 > easier" — that's off-pattern and brittle. If neither MCP nor CLI is reachable, say so and ask
 > before curling the API directly.
@@ -193,6 +204,13 @@ to reuse is when the user explicitly points you at a specific existing app to se
 `attack-libraries` / `target` / `playground` / `update` / `mcp` — none of them create an app). The CLI
 ships the MCP server (`darkhunt-cli mcp`) that an AI client (e.g. Claude Code) drives, reusing the
 credentials from `enroll`.
+
+**Where to get `darkhunt-cli`.** Install it from the official installer releases:
+<https://github.com/darkhunt-security/darkhunt-cli-installer/releases> — grab the build for
+the user's platform (or run the installer script from that repo). Once installed, `darkhunt-cli`
+is on `PATH` and both `enroll` and `mcp` (below) work. If the `darkhunt-cli` command isn't found,
+that releases page is where it comes from — point the user there rather than assuming it's an
+`npm i -g` package.
 
 **Check the MCP is connected before anything else.** In Claude Code, look for `darkhunt_*` tools; if
 they're absent, the server isn't registered in this session. **Offer to wire it up** rather than
@@ -370,11 +388,14 @@ maybeUndefined }` fails to typecheck — build the object and add the optional
 
   ```ts
   const usage: {
-    input_tokens: number; output_tokens: number;
-    cache_read_tokens?: number; cache_creation_tokens?: number;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens?: number;
+    cache_creation_tokens?: number;
   } = { input_tokens: u.input_tokens, output_tokens: u.output_tokens };
   if (u.cache_read_input_tokens != null) usage.cache_read_tokens = u.cache_read_input_tokens;
-  if (u.cache_creation_input_tokens != null) usage.cache_creation_tokens = u.cache_creation_input_tokens;
+  if (u.cache_creation_input_tokens != null)
+    usage.cache_creation_tokens = u.cache_creation_input_tokens;
   generation.end({ model, outputMessages, usage });
   ```
 
@@ -493,12 +514,12 @@ trace tree.
 The table above is generic; here's the worked mapping for the common non-chat
 calls in an SDK-examples repo (verified against the OpenAI SDK):
 
-| Provider call                                  | Observation                                                    | Notes                                                                                     |
-| ---------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Embeddings                                     | `trace.span(name, { observationType: 'embedding' })`          | A span has **no** `model` / `usage` field — put the model name + token count in `metadata` |
-| Content moderation                             | `trace.span(name, { observationType: 'guardrail' })`          | Set `level: 'WARNING'` + `statusMessage` **only when flagged**; omit `level` otherwise     |
-| Image generation (DALL·E etc.)                 | `trace.generation(name, { model, input: prompt })`            | It produces content → a generation; `output` = the image URL; **no `usage`** to send       |
-| Management / async calls (assistant create, fine-tune job, batch submit/retrieve) | `trace.span(name, { observationType: 'tool', toolName })` | These don't run inference themselves (the work is async) — record them as tool spans        |
+| Provider call                                                                     | Observation                                               | Notes                                                                                      |
+| --------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Embeddings                                                                        | `trace.span(name, { observationType: 'embedding' })`      | A span has **no** `model` / `usage` field — put the model name + token count in `metadata` |
+| Content moderation                                                                | `trace.span(name, { observationType: 'guardrail' })`      | Set `level: 'WARNING'` + `statusMessage` **only when flagged**; omit `level` otherwise     |
+| Image generation (DALL·E etc.)                                                    | `trace.generation(name, { model, input: prompt })`        | It produces content → a generation; `output` = the image URL; **no `usage`** to send       |
+| Management / async calls (assistant create, fine-tune job, batch submit/retrieve) | `trace.span(name, { observationType: 'tool', toolName })` | These don't run inference themselves (the work is async) — record them as tool spans       |
 
 ## Supported fields — SDK ↔ trace-hub mapping
 
@@ -537,15 +558,15 @@ OTel resource attributes auto-set by the SDK (read by trace-hub as
 Set on `trace.span(name, opts)` / `trace.generation(name, opts)` / via
 `.update(opts)` / `.end(opts)`.
 
-| SDK option        | OTel attribute emitted                | trace-hub field                  | Notes                                                                                                                       |
-| ----------------- | ------------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `observationType` | `darkhunt.observation.type`           | `span.type`                      | one of `span` / `tool` / `agent` / `generation` / `event` / `chain` / `retriever` / `evaluator` / `embedding` / `guardrail` |
-| `input`           | `darkhunt.observation.input`          | `content.input`                  | masked; objects walked recursively                                                                                          |
-| `output`          | `darkhunt.observation.output`         | `content.output`                 | masked                                                                                                                      |
+| SDK option        | OTel attribute emitted                | trace-hub field                  | Notes                                                                                                                                                                                   |
+| ----------------- | ------------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `observationType` | `darkhunt.observation.type`           | `span.type`                      | one of `span` / `tool` / `agent` / `generation` / `event` / `chain` / `retriever` / `evaluator` / `embedding` / `guardrail`                                                             |
+| `input`           | `darkhunt.observation.input`          | `content.input`                  | masked; objects walked recursively                                                                                                                                                      |
+| `output`          | `darkhunt.observation.output`         | `content.output`                 | masked                                                                                                                                                                                  |
 | `level`           | `darkhunt.observation.level`          | `span.level`                     | SDK `ObservationLevel` = `'DEBUG'` / `'INFO'` / `'WARNING'` / `'ERROR'` (NOT `'DEFAULT'`). **Omit** `level` to get the backend's default; passing `'DEFAULT'` is not a valid SDK value. |
-| `statusMessage`   | OTel `setStatus({ message })`         | `error.message` (`_span_status`) | masked; sets ERROR status when paired with `level: 'ERROR'`                                                                 |
-| `version`         | `darkhunt.version`                    | `span.version`                   |                                                                                                                             |
-| `metadata`        | `darkhunt.observation.metadata.<key>` | `span.metadata.<key>`            | one OTel attr per key — never a single JSON blob (backend can't iterate)                                                    |
+| `statusMessage`   | OTel `setStatus({ message })`         | `error.message` (`_span_status`) | masked; sets ERROR status when paired with `level: 'ERROR'`                                                                                                                             |
+| `version`         | `darkhunt.version`                    | `span.version`                   |                                                                                                                                                                                         |
+| `metadata`        | `darkhunt.observation.metadata.<key>` | `span.metadata.<key>`            | one OTel attr per key — never a single JSON blob (backend can't iterate)                                                                                                                |
 
 ### Generation-only fields
 
@@ -571,7 +592,7 @@ These add to the span fields above.
 > **You usually don't need to pass `cost`.** trace-hub auto-prices a generation
 > from `model` + `usage` for known models — send an accurate `model` and
 > `usage.{input,output,cache_*}_tokens` and the dashboard shows a computed dollar
-> cost (verified: a generation sent with usage but *no* `cost` rendered `$0.0002`).
+> cost (verified: a generation sent with usage but _no_ `cost` rendered `$0.0002`).
 > Only set `cost` explicitly for custom / self-hosted / unpriced models the
 > backend can't price on its own.
 
@@ -599,7 +620,7 @@ dashboard:
 
 The reference integration (`attack-discovery`) is a single always-configured
 service. A **public SDK-examples / quickstart repo** is a different archetype —
-it must still run for a user who has *no* Darkhunt account, and it's usually a
+it must still run for a user who has _no_ Darkhunt account, and it's usually a
 folder of many independent one-shot entry scripts rather than one server. Two
 patterns make that clean.
 
@@ -612,8 +633,14 @@ in a sample script breaks `node examples/foo.js` for anyone who just wants to
 try the underlying SDK. Gate on config presence and no-op when absent:
 
 ```ts
-const REQUIRED = ['DARKHUNT_API_KEY', 'DARKHUNT_TENANT_ID', 'DARKHUNT_WORKSPACE_ID', 'DARKHUNT_APPLICATION_ID'];
-const enabled = process.env['DARKHUNT_ENABLED'] !== 'false' && REQUIRED.every((k) => !!process.env[k]);
+const REQUIRED = [
+  'DARKHUNT_API_KEY',
+  'DARKHUNT_TENANT_ID',
+  'DARKHUNT_WORKSPACE_ID',
+  'DARKHUNT_APPLICATION_ID',
+];
+const enabled =
+  process.env['DARKHUNT_ENABLED'] !== 'false' && REQUIRED.every((k) => !!process.env[k]);
 
 // Returns null when unconfigured; callers optional-chain so the demo still runs.
 export function startTrace(name, args) {
@@ -651,11 +678,14 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 function deriveServiceName() {
   if (process.env['DARKHUNT_SERVICE_NAME']) return process.env['DARKHUNT_SERVICE_NAME'];
   const entry = process.argv[1];
-  if (!entry) return 'my-sdk-examples';               // e.g. `node -e ...` → argv[1] is undefined
+  if (!entry) return 'my-sdk-examples'; // e.g. `node -e ...` → argv[1] is undefined
   const rel = path.relative(ROOT, entry);
   if (!rel || rel.startsWith('..')) return 'my-sdk-examples';
-  const parts = rel.replace(/\.[cm]?js$/i, '').split(path.sep).filter((s) => s && s !== 'index');
-  return ['my-sdk-examples', ...parts].join('.');      // chat/vision.js → my-sdk-examples.chat.vision
+  const parts = rel
+    .replace(/\.[cm]?js$/i, '')
+    .split(path.sep)
+    .filter((s) => s && s !== 'index');
+  return ['my-sdk-examples', ...parts].join('.'); // chat/vision.js → my-sdk-examples.chat.vision
 }
 ```
 
@@ -666,6 +696,13 @@ a node only appears **after it has emitted at least one trace** — a service wi
 zero spans shows up nowhere, so "I don't see my other examples" just means those
 scripts haven't run yet. (These are all still **one application** — the split is
 `service.name`, not `applicationId`.)
+
+> **You MUST tell the user the topology will render as disconnected nodes — and
+> why — before you call the integration done.** An island graph is the _correct_
+> output for a repo of independent single-agent scripts, but if you hand it over
+> without a word, the user opens the Topology tab, sees unconnected cards, and
+> reads it as a broken integration. Pre-empt that: see "On completion, report the
+> topology shape" below — it applies to every integration, not just this archetype.
 
 ## Multi-agent topology & handoffs
 
@@ -686,12 +723,19 @@ When the service is one agent in a **multi-agent system**, the platform reconstr
 
 **To connect the graph, NEST each agent's trace under its caller.** Two things are required:
 
-1. **Register the global OTel context manager + propagator yourself.** The SDK builds a
-   `NodeTracerProvider` but never calls `provider.register()`, so the global OTel API has **no**
-   context manager or propagator — `context.with()` is a no-op and every `dh.trace()` starts a
-   fresh root with no parent. Do this ONCE, before any client/trace is created:
+1. **A global OTel context manager + propagator must be registered** — otherwise `context.with()`
+   is a no-op and every `dh.trace()` starts a fresh root with no parent. **As of SDK ≥ 0.5.4 the SDK
+   does this for you automatically** when you construct `new DarkhuntTelemetry()` (it registers the
+   global context manager + W3C propagator, without registering its TracerProvider globally, so it
+   won't hijack a host's OTel). So on current versions there is **nothing to wire up** — just
+   construct the client before the first `openTrace`.
+
+   Only if the target app **manages its own OTel context** (or is pinned to SDK < 0.5.4) do you
+   register it yourself, once, before any client/trace — and opt the SDK out with
+   `new DarkhuntTelemetry({ registerContextManager: false })` (or `DARKHUNT_REGISTER_CONTEXT_MANAGER=false`):
 
    ```ts
+   // ONLY needed on SDK < 0.5.4, or when you deliberately manage OTel yourself:
    import { context, propagation } from '@opentelemetry/api';
    import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
    import { W3CTraceContextPropagator } from '@opentelemetry/core';
@@ -699,8 +743,6 @@ When the service is one agent in a **multi-agent system**, the platform reconstr
    context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
    propagation.setGlobalPropagator(new W3CTraceContextPropagator());
    ```
-
-   (Yes, this means you DO take `@opentelemetry/{api,context-async-hooks,core}` as direct deps.)
 
 2. **Create each agent's trace inside its caller's context**, so the agent's root span gets a
    `parentSpanId` and shares the caller's `trace_id`. The caller's token is just its
@@ -740,10 +782,60 @@ const trace = openTrace({
 });
 ```
 
-Cross-process (Temporal / queue / HTTP): the token is a string — carry it in the workflow arg /
-message / header. The reference integration is `temporal-demo`
-(`/Users/sergey/proj/darkhunt/temporal-demo`: `src/telemetry.ts` `openTrace`/`spanHandoff`,
-`src/otel.ts` globals, `src/domains/*/workflows/coordinator.ts` threading).
+### Carrying the handoff token across each transport
+
+**The token is an opaque W3C `traceparent` STRING, and it belongs in the transport's METADATA /
+HEADER channel — NOT in the business payload (args / body / message data).** Producer mints it with
+`trace.handoffToken()` (or `spanHandoff(span)`); consumer nests under it with
+`openTrace({ handoffFrom: [token] })`. Carry it **out of band** on every transport, exactly like the
+HTTP `traceparent` header — smuggling trace context into your domain args/body couples business data
+to observability plumbing. The transport is otherwise irrelevant; the only thing that changes is
+which metadata channel carries the string. Every transport still needs the two universals above
+(a global OTel context manager — the SDK auto-registers it as of ≥ 0.5.4; and one `service.name`
+per agent).
+
+| Transport                         | Metadata / header channel (NOT the payload)                                                                                        | Producer                                        | Consumer                                                |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------- |
+| **Temporal**                      | a **Temporal Header** (context channel, via an interceptor) — NOT the workflow args                                                | interceptor sets the header on the call         | activity interceptor reads it → `openTrace`             |
+| **HTTP**                          | the standard **`traceparent` header** (W3C Trace Context)                                                                          | caller sets `headers: { traceparent: handoff }` | handler reads `req.header('traceparent')` → `openTrace` |
+| **Queue** (Redis/Kafka/…)         | a **message header / attribute** (Kafka headers, SQS attributes, NATS/AMQP headers; a dedicated Redis-stream field) — NOT the body | put the token in the message metadata           | read the header → `openTrace({ handoffFrom: [token] })` |
+| **In-process graph** (LangGraph…) | a field in the **graph state**                                                                                                     | node writes `state.handoff`                     | node reads `state.handoff` → `openTrace`                |
+
+- **HTTP** — use the **standard `traceparent` header**, NOT a body field. It's the W3C convention, so
+  any OTel-instrumented service propagates it for free, and the request body stays pure business data.
+  **Fan-in** is natural: each incoming request carries its own `traceparent`; the consumer collects
+  one per caller.
+- **Queue** — carry the token in the **message header / attribute, not the body**. Kafka has native
+  record headers; SQS has message attributes; NATS/AMQP have headers; a raw Redis stream has no header
+  concept, so use a **dedicated stream field** kept separate from the serialized payload
+  (`XADD … traceparent <token> data <json>` — never inside `data`). The stream is durable, so
+  ordering/timing don't matter (a consumer that runs first just waits); **read the upstream
+  message(s) first** — you need the token before you open the nested trace. Fan-in = an array of
+  tokens. The queue itself is invisible to the graph (only `publish`/`consume` tool spans); edges stay
+  agent→agent.
+- **Temporal** — the token belongs in a **Temporal Header**, not the workflow args (your business
+  inputs). Temporal Headers are a first-class metadata channel propagated through **interceptors** —
+  `@temporalio/interceptors-opentelemetry` does exactly this for OTel context (workflow→activity) out
+  of the box. Caveat: that interceptor auto-nests each span under its **immediate caller** (a
+  call-graph/star shape); for deliberate agent→agent edges (link to the real producer; self-loops vs
+  back-edges — see below) set your OWN header carrying the chosen parent token via a custom
+  interceptor and read it in the activity. And **never instrument workflow code** (deterministic
+  sandbox — no network/timers, so no SDK): telemetry lives in activities + the gateway; an activity
+  retry re-runs its LLM+tool loop and re-emits spans.
+- **In-process graph** (LangGraph, etc.) — there's no wire header in-process, so the token rides in
+  the graph **state** (or ambient OTel context). Still give each node **its own `service.name`
+  client** (`agentClient('domain.node')`) and thread the token node→node (a node writes its
+  `handoffToken()` into state; the next reads it as `handoffFrom`), or the nodes collapse into one
+  undifferentiated blob.
+
+**Reference integration — `temporal-demo` (`/Users/sergey/proj/darkhunt/temporal-demo`), one live
+example per transport:** core helpers `src/telemetry.ts` (`openTrace`/`spanHandoff`/`agentClient`) +
+`src/otel.ts` (globals); **Temporal** → `src/domains/security/{workflows,activities}/`; **HTTP header**
+→ `src/domains/healthcare/{http.ts,handlers.ts}`; **Redis queue** → `src/domains/devops/{bus.ts,handlers.ts}`;
+**LangGraph** → `src/domains/banking/graph.ts`. All four reconstruct into the identical topology.
+(Caveat: the demo's Temporal path currently threads the token as an activity **arg** for simplicity —
+the idiomatic channel is a Temporal Header via an interceptor as above; the queue path already keeps
+the token in a dedicated stream field, out of the JSON body.)
 
 ### The orchestrator/gateway node needs CONTENT or it disappears
 
@@ -773,6 +865,42 @@ bug: an `advisor` that consumes the `geodata` agent's forecast was linked to the
 it rendered as a parallel sibling of `geodata` instead of downstream of it. Fix: `advisor`'s
 `handoffFrom` = `[geodata.handoff]` → `coordinator → geodata → advisor`.
 
+### Logical coupling through a datastore/queue ≠ a drawn edge — flag it to the user EXPLICITLY
+
+When two services are related only through an **indirect medium** — a shared database, vector
+store, object bucket, cache, or a queue/file/table the handoff token does **not** ride on — there
+is **no `parentSpanId` chain between them**, so the topology renders them as **disjointed islands**
+even though a human sees an obvious data dependency. This is frequently _correct_: they're separate
+processes, often run at different times. The canonical case is a **RAG app**: an `ingest` service
+scrapes → embeds → **writes** the vector store, and an `answer` service later **reads** it. Real
+dependency, but **not a live handoff** — nothing carries a trace context from one to the other, so
+the SDK has nothing to nest. (Verified live: a RAG demo's `ingest` WORKER and `answer` AGENT
+rendered as two independent cards, linked in reality only by the Astra collection across runs.)
+
+**Do NOT silently synthesize an edge, and do NOT let the user assume it will auto-connect.** If you
+detect a logical connection that the current code does not thread a token through, you MUST call it
+out — say plainly that linking the agents is an **architecture change, not a telemetry tweak**:
+
+- `handoffToken()` returns a **plain string**; to draw the edge you have to **carry it across the
+  medium** — persist it next to the data (an extra column/field on the row the producer writes and
+  the consumer reads back), put it in the queue message / file metadata / HTTP header, etc. — and
+  have the downstream service pass it as `handoffFrom[0]` (see the ⚠️ nesting block above).
+- If the architecture has **nowhere to thread that token** (e.g. producer and consumer run in
+  unrelated invocations with only a datastore between them), the nodes **will stay disjointed, and
+  that is the honest picture** — surface it, don't fake a link.
+
+Put it to the user in concrete terms, e.g.:
+
+> "`ingest` and `answer` share the vector DB but never hand off in one live flow, so the graph shows
+> two independent nodes. Connecting them isn't a telemetry setting — it needs an **architecture
+> change**: store the ingest run's `handoffToken()` alongside the vectors (or in whatever record
+> `answer` reads) and have `answer` pass it back as `handoffFrom`. Otherwise these agents stay
+> disjointed. Want that change, or is independent the truthful shape here?"
+
+Make this **explicit** every time you spot the pattern — a shared store, a message the token isn't
+on, a cron/batch boundary. The user should never be surprised later that "obviously related"
+services show up unconnected; you flagged it and named the architectural work required.
+
 **Other span rules:**
 
 - **Agent vs Worker** — a node with ≥1 `generation` renders as an **Agent** (model, cost, AI-risk
@@ -793,7 +921,8 @@ it rendered as a parallel sibling of `geodata` instead of downstream of it. Fix:
 
 **Gotchas (each was a real bug):**
 
-1. **Nodes disconnected → you forgot to nest** (register globals + `openTrace`). Links alone don't
+1. **Nodes disconnected → you forgot to nest** (SDK ≥ 0.5.4 registers the context manager for you; you
+   still must use `openTrace` to nest). Links alone don't
    draw edges on this backend; the `parentSpanId` chain does. See the ⚠️ block above.
 2. **Gateway/orchestrator node missing → its span had no generation/tool content** and was filtered.
    Give it a `dispatch` tool span and hand off from that span.
@@ -803,6 +932,11 @@ it rendered as a parallel sibling of `geodata` instead of downstream of it. Fix:
 5. **Fan-in is `handoffFrom: [a, b, c]`** — `[0]` is the parent edge; the rest are links.
 6. **Don't infer handoffs from the call graph** — the orchestrator calls everyone (a star). Declare
    the causal edges via `handoffFrom`.
+7. **Logical link but no token threaded → nodes stay disjointed, and you MUST say so.** If services
+   are coupled only through a datastore / queue / batch boundary (classic RAG `ingest`→`answer`),
+   there's no `parentSpanId` chain to nest, so they render as islands. Tell the user explicitly that
+   connecting them is an **architecture change** (carry `handoffToken()` across that medium), not a
+   telemetry setting — see "Logical coupling through a datastore/queue" above.
 
 ## Verification
 
@@ -819,21 +953,22 @@ incoming trace.
 > **The Darkhunt MCP cannot read traces back — don't promise a server-side
 > confirmation you can't do.** The MCP toolset is red-team oriented
 > (`scan` / `playground` / `targets` / `policies` / `datasets` / `corpora` / app
-> + workspace management) — there is **no tracing-query / read-trace tool**. So
-> from the agent side you have exactly two checks: **(1)** the curl empty-body
-> probe below, which confirms **auth + routing only** (a 400), and **(2)** the
-> human opening the dashboard. There is no API to assert "span X landed." Tell
-> the user that final confirmation is theirs to eyeball; don't claim you verified
-> ingestion programmatically.
+>
+> - workspace management) — there is **no tracing-query / read-trace tool**. So
+>   from the agent side you have exactly two checks: **(1)** the curl empty-body
+>   probe below, which confirms **auth + routing only** (a 400), and **(2)** the
+>   human opening the dashboard. There is no API to assert "span X landed." Tell
+>   the user that final confirmation is theirs to eyeball; don't claim you verified
+>   ingestion programmatically.
 
 > **Verify through the real integration, not a throwaway probe script.** A probe
-> that emits a span under a *different* `serviceName` (e.g. `ingest-verify`) mints
+> that emits a span under a _different_ `serviceName` (e.g. `ingest-verify`) mints
 > a **whole separate node in the Topology view** — and it renders as its own Agent
 > with a `↻ ×N` self-loop for each time you ran it. There's no delete-trace API, so
 > that node is **permanent noise** in the OBSERVABILITY app (verified this run: a
 > `ingest-verify` probe left a standing `↻ ×2` agent card next to the real one).
 > Prefer the two clean checks: **(1)** the curl endpoint probe above (server-side,
-> emits nothing), and **(2)** running the *actual* instrumented code path and
+> emits nothing), and **(2)** running the _actual_ instrumented code path and
 > reading its node. If you truly must emit a span from a script, give it the
 > **same `serviceName` as the real integration** so it folds into that node
 > instead of creating a phantom agent.
@@ -888,6 +1023,52 @@ points at the right environment **and ends in `/trace-hub`**, (3) for
 the baseUrl/tenant** (a wrong-env key → 401), (4) the process actually exits
 gracefully so `flush()` runs (a `kill -9` will lose the in-memory batch).
 
+## On completion, report the topology shape to the user
+
+**Finishing the wiring is not the last step — telling the user what their
+Topology view will (and won't) show is.** The dashboard's Topology tab is the
+first thing most users open, and a graph of **disconnected nodes is a perfectly
+correct result** for many architectures. But an unconnected graph handed over
+_without explanation_ reads as a broken integration — the user assumes the
+handoff/nesting silently failed and files it as a mistake. So close every
+integration with an explicit, one-paragraph statement of the topology shape and
+the reason for it. Do this proactively; don't wait to be asked.
+
+Decide which case you're in and say so:
+
+- **Connected graph (real handoffs wired).** A global OTel context manager is registered (automatic
+  on SDK ≥ 0.5.4) and you threaded `handoffToken()` / `handoffFrom` so agents nest via `parentSpanId`.
+  Tell the user which edges to expect (`coordinator → geodata → advisor`, self-loops,
+  etc.) so they can confirm the graph matches the intended causal DAG.
+
+- **Disconnected nodes (no handoffs — and that's correct).** The services are
+  independent processes with no live agent→agent handoff (a repo of standalone
+  single-agent scripts; a producer/consumer pair coupled only through a
+  datastore, queue, or batch boundary; a set of unrelated example entry points).
+  There is **no `parentSpanId` chain**, so trace-hub has nothing to nest and the
+  nodes render as islands. **State this before the user sees it**, name the
+  reason, and make clear that connecting them would be an **architecture change,
+  not a telemetry setting** (carry a `handoffToken()` across the boundary — see
+  the ⚠️ nesting block and "Logical coupling through a datastore/queue"). Offer
+  the change if it's actually wanted; otherwise confirm that independent is the
+  honest shape.
+
+Concrete wording for the disconnected case (adapt to the repo):
+
+> "These six examples are independent single-agent scripts — each runs as its own
+> process and none hands off to another, so the Topology view will show them as
+> **separate, unconnected nodes**. That's the correct picture, not a
+> misconfiguration: Darkhunt draws edges from the cross-service `parentSpanId`
+> chain, and there is no such chain here (the shared budget PDF in a few of them
+> is a data source across separate runs, not a live handoff). Connecting them
+> would require real handoffs with token threading — an architecture change, not
+> a telemetry tweak. Want that, or is independent the truthful shape here?"
+
+If the repo will be run by others (an OSS / examples repo), also **persist this
+note in the repo** (a short "Why the topology shows separate nodes (expected)"
+subsection in the README's telemetry section), so whoever runs it later reaches
+the same understanding without you in the loop.
+
 ## Common pitfalls
 
 1. **Constructing the client per call.** Causes listener leaks. Use the
@@ -915,8 +1096,8 @@ inputMessages, systemInstructions })` (known at start) → `.end({ outputMessage
    (also a `tsc` error). To record an error, set `level: 'ERROR'` + `statusMessage` on a **span**
    or generation, not on the trace.
 9. **Nodes disconnected / gateway node missing / wrong arrows** — see the ⚠️ topology block above.
-   These were the biggest real bugs: you must NEST via `parentSpanId` (register OTel globals +
-   `openTrace`), give the orchestrator a tool span, link to the real producer, and use self-loops
+   These were the biggest real bugs: you must NEST via `parentSpanId` (the SDK ≥ 0.5.4 registers the
+   context manager; you wrap with `openTrace`), give the orchestrator a tool span, link to the real producer, and use self-loops
    (not per-round back-edges) for deep loops.
 10. **Reusing an existing app / reaching for raw REST.** Two setup mistakes from a real run
     (see step 2b): (a) grabbing a pre-existing `applicationId` instead of **creating a new,
@@ -924,6 +1105,14 @@ inputMessages, systemInstructions })` (known at start) → `.end({ outputMessage
     listing/creating apps by curling `…/workflow-manager/api/…` when the **Darkhunt MCP** (or, failing
     that, `darkhunt-cli`) is the intended interface. Use the MCP first; if it isn't connected, offer
     to wire it up — don't silently route around it to raw REST.
+11. **Handing over a disconnected topology without explaining it.** When the finished integration
+    correctly renders as independent, unconnected nodes (a repo of standalone single-agent scripts;
+    services coupled only through a datastore/queue), the user opens the Topology tab, sees islands,
+    and assumes the integration is broken. You must proactively state — before they see it — that the
+    disconnected graph is the _correct_ shape and why (no agent→agent handoff → no `parentSpanId`
+    chain to nest), and that connecting them is an architecture change, not a telemetry setting. See
+    "On completion, report the topology shape to the user." For OSS/example repos, persist that note
+    in the README too.
 
 ## Reference files in attack-discovery
 

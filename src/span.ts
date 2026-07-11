@@ -1,18 +1,37 @@
 import {
   diag,
   context as otContext,
+  propagation,
+  ROOT_CONTEXT,
   trace as otTrace,
   SpanStatusCode,
   type Context,
   type Link,
   type Span as OtelSpan,
+  type SpanContext,
   type SpanOptions as OtelSpanOptions,
   type TimeInput,
   type Tracer,
 } from '@opentelemetry/api';
 import { ATTR, GEN_AI } from './attributes.js';
 import type { Sanitizer } from './masking/index.js';
-import type { Trace } from './trace.js';
+import type { HandoffToken, Trace } from './trace.js';
+
+/**
+ * Serialize a span context into a W3C `traceparent` string via the **global OTel
+ * propagator** (`propagation.inject`) — the idiomatic, symmetric counterpart to the
+ * `propagation.extract` on the consuming side. Falls back to building the traceparent
+ * directly only if no global propagator is registered (e.g. the SDK was constructed
+ * with `registerContextManager: false` and the host set none).
+ */
+export function spanContextToToken(sc: SpanContext | undefined): HandoffToken {
+  if (!sc?.traceId || !sc?.spanId) return '';
+  const carrier: Record<string, string> = {};
+  propagation.inject(otTrace.setSpanContext(ROOT_CONTEXT, sc), carrier);
+  if (carrier.traceparent) return carrier.traceparent;
+  const flags = (sc.traceFlags & 0xff).toString(16).padStart(2, '0');
+  return `00-${sc.traceId}-${sc.spanId}-${flags}`;
+}
 import type { Cost, Metadata, ObservationLevel, ObservationType, Usage } from './types.js';
 
 /**
@@ -210,6 +229,16 @@ export class Span {
 
   get context(): Context {
     return this.ctx;
+  }
+
+  /**
+   * A serializable {@link HandoffToken} for THIS span (a W3C `traceparent`, produced via
+   * the global propagator). Hand it to a downstream agent's {@link TraceArgs.handoffFrom}
+   * to record a handoff from this span specifically — e.g. an orchestrator/gateway hands
+   * off from its `dispatch` tool span (a contentless root span would be filtered out).
+   */
+  handoffToken(): HandoffToken {
+    return spanContextToToken(otTrace.getSpanContext(this.ctx));
   }
 
   get trace(): Trace {

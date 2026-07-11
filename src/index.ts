@@ -1,4 +1,5 @@
 export { DarkhuntTelemetry, type DarkhuntTelemetryOptions, type MaskingOptions } from './client.js';
+export { registerOtelContextGlobals } from './otel-globals.js';
 export { Sanitizer, type CustomPattern } from './masking/index.js';
 export { Trace, type TraceArgs, type TraceUpdateArgs, type HandoffToken } from './trace.js';
 export {
