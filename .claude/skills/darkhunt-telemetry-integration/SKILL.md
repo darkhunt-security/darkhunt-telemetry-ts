@@ -95,9 +95,9 @@ box it usually installs with no extra config because the user already has a
 > source of truth; the public-npm mirror can lag by many builds (seen live: public maxed at
 > `0.5.2` while GitHub had `0.5.5-build.131`). So any environment WITHOUT the GitHub-Packages
 > scope+token — most CI, and **every container `npm install`** — fails with `ETARGET: No
-> matching version found` on the exact version you pinned. Treat GitHub Packages auth as
+matching version found` on the exact version you pinned. Treat GitHub Packages auth as
 > **required, not optional** (see "Containerized / CI builds" below). Also: `npm view
-> --registry=https://registry.npmjs.org …` **lies** here — the `@darkhunt-security:registry`
+--registry=https://registry.npmjs.org …` **lies** here — the `@darkhunt-security:registry`
 > scope line in `~/.npmrc` overrides `--registry`, so it silently queries GitHub. To see what
 > public npm actually has, hit it directly:
 > `curl https://registry.npmjs.org/@darkhunt-security%2Ftelemetry`.
@@ -993,9 +993,9 @@ everything ingests fine, per-agent model/cost/tools all look right, but the Topo
 (every agent hanging off the gateway/coordinator) instead of the real pipeline (`recon → analyzer ⇄ planner
 → taint → sandbox → triage → remediation → report`).
 
-**Why the star happens.** The workflow interceptor, by default, forwards the orchestrator's *inbound*
+**Why the star happens.** The workflow interceptor, by default, forwards the orchestrator's _inbound_
 handoff token to **every** `executeChild` and **every** activity. So with no per-edge work, all agents nest
-under the same upstream — that's the **call graph**, and a fan-out orchestrator's call graph *is* a star.
+under the same upstream — that's the **call graph**, and a fan-out orchestrator's call graph _is_ a star.
 It is almost never the topology you want.
 
 **Why `childArgs` alone doesn't save you.** `childArgs(input, [upstreamToken])` overrides one edge — but
@@ -1006,7 +1006,7 @@ coordinator**. So a child's own token has exactly one way home: the **activity's
 
 **The recipe (the Temporal-specific exception to "keep tokens out of signatures").** Inbound, the token
 rides the header (out of the business args) — that rule still holds. The token a coordinator forwards
-*downstream* is **returned** as an optional `handoff?: string` telemetry field on the activity result; the
+_downstream_ is **returned** as an optional `handoff?: string` telemetry field on the activity result; the
 child workflow passes it through untouched, and the coordinator threads it into the NEXT `executeChild`:
 
 ```ts
@@ -1047,9 +1047,15 @@ import { defaultPayloadConverter } from '@temporalio/common';
 import { HANDOFF_HEADER } from '@darkhunt-security/telemetry/temporal/workflow';
 const gatewayHandoff: WorkflowClientInterceptor = {
   async start(input, next) {
-    const token = currentGatewayToken();      // ambient token from the gateway's dh.trace()
+    const token = currentGatewayToken(); // ambient token from the gateway's dh.trace()
     return token
-      ? next({ ...input, headers: { ...input.headers, [HANDOFF_HEADER]: defaultPayloadConverter.toPayload([token]) } })
+      ? next({
+          ...input,
+          headers: {
+            ...input.headers,
+            [HANDOFF_HEADER]: defaultPayloadConverter.toPayload([token]),
+          },
+        })
       : next(input);
   },
 };
