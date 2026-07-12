@@ -192,6 +192,60 @@ export function toOtelLinks(contexts?: Context[]): Link[] {
   return links;
 }
 
+/** Thenable check for the active-span runner: decides whether to end the span
+ *  now (synchronous return) or after the returned promise settles. */
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === 'object' || typeof value === 'function') &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
+/** Best-effort message for the ERROR status set when an active-span callback throws. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Run `fn` with `span` set ACTIVE in the ambient OTel context (via
+ * `context.with(span.context, ...)`), so in-process children created without an
+ * explicit parent — and third-party OTel auto-instrumentation — nest under it.
+ * The span is ended automatically when `fn` settles: synchronously on return, or
+ * when the returned promise resolves/rejects. On a thrown error or rejection the
+ * span is marked ERROR (with the message) and the error re-thrown. `span.end()`
+ * is idempotent, so a callback that ends the span itself (e.g. a `Generation`
+ * that needs to record usage/cost) is fully supported — its end wins.
+ *
+ * Shared by the `startActiveSpan` / `startActiveGeneration` helpers on both
+ * {@link Trace} and {@link Span}.
+ */
+export function runWithActiveSpan<S extends Span, T>(span: S, fn: (span: S) => T): T {
+  return otContext.with(span.context, () => {
+    let result: T;
+    try {
+      result = fn(span);
+    } catch (err) {
+      span.end({ level: 'ERROR', statusMessage: errorMessage(err) });
+      throw err;
+    }
+    if (isPromiseLike(result)) {
+      return result.then(
+        (value) => {
+          span.end();
+          return value;
+        },
+        (err) => {
+          span.end({ level: 'ERROR', statusMessage: errorMessage(err) });
+          throw err;
+        }
+      ) as unknown as T;
+    }
+    span.end();
+    return result;
+  });
+}
+
 export class Span {
   protected readonly tracer: Tracer;
   protected readonly traceRef: Trace;
@@ -274,6 +328,46 @@ export class Span {
       options: { ...options, observationType: 'event' },
     });
     ev.end();
+  }
+
+  /**
+   * Opt-in ergonomic wrapper: open a child {@link Span} under this span, run `fn`
+   * with that child ACTIVE in the ambient OTel context, and end it when `fn`
+   * settles. Because the child is active, in-process spans opened without an
+   * explicit parent and third-party OTel auto-instrumentation nest under it.
+   * Mirrors OTel's `tracer.startActiveSpan`. On a thrown error / rejected promise
+   * the child is marked ERROR and the error re-thrown. Additive — the plain
+   * {@link Span.span} factory is unchanged and does NOT touch the ambient context.
+   */
+  startActiveSpan<T>(name: string, fn: (span: Span) => T): T;
+  startActiveSpan<T>(name: string, options: SpanOptions, fn: (span: Span) => T): T;
+  startActiveSpan<T>(
+    name: string,
+    optionsOrFn: SpanOptions | ((span: Span) => T),
+    maybeFn?: (span: Span) => T
+  ): T {
+    const fn = (typeof optionsOrFn === 'function' ? optionsOrFn : maybeFn) as (span: Span) => T;
+    const options = typeof optionsOrFn === 'function' ? undefined : optionsOrFn;
+    return runWithActiveSpan(this.span(name, options), fn);
+  }
+
+  /** Active-context counterpart of {@link Span.generation} — see {@link Span.startActiveSpan}. */
+  startActiveGeneration<T>(name: string, fn: (generation: Generation) => T): T;
+  startActiveGeneration<T>(
+    name: string,
+    options: GenerationOptions,
+    fn: (generation: Generation) => T
+  ): T;
+  startActiveGeneration<T>(
+    name: string,
+    optionsOrFn: GenerationOptions | ((generation: Generation) => T),
+    maybeFn?: (generation: Generation) => T
+  ): T {
+    const fn = (typeof optionsOrFn === 'function' ? optionsOrFn : maybeFn) as (
+      generation: Generation
+    ) => T;
+    const options = typeof optionsOrFn === 'function' ? undefined : optionsOrFn;
+    return runWithActiveSpan(this.generation(name, options), fn);
   }
 
   update(options: SpanUpdateOptions): this {

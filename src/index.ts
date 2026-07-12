@@ -14,3 +14,20 @@ export {
   type GenerationEndOptions,
 } from './span.js';
 export type { ObservationType, ObservationLevel, Usage, Cost, Metadata } from './types.js';
+// Dependency-free transport helpers for carrying a handoff token across a service
+// boundary (HTTP `traceparent` header / queue message metadata). Also available at
+// the `./transports` subpath. The optional Temporal interceptors live at the
+// separate `./temporal` subpath and are intentionally NOT re-exported here, so the
+// core entry loads with zero Temporal packages installed.
+export {
+  TRACEPARENT_HEADER,
+  handoffToHttpHeaders,
+  handoffFromHttpHeaders,
+  type HttpHeadersLike,
+  HANDOFF_MESSAGE_META_KEY,
+  handoffToMessageMeta,
+  handoffFromMessageMeta,
+  handoffsFromMessages,
+  type MessageMeta,
+  type MessageMetaValue,
+} from './transports/index.js';

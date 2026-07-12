@@ -14,6 +14,7 @@ import type { Sanitizer } from './masking/index.js';
 import {
   applyMetadataAttrs,
   Generation,
+  runWithActiveSpan,
   safeJsonStringify,
   Span,
   spanContextToToken,
@@ -196,13 +197,26 @@ export class Trace {
 
     const rootOptions: OtelSpanOptions = {};
     if (args.startTime !== undefined) rootOptions.startTime = args.startTime;
-    const rootLinks = toOtelLinks([...(args.links ?? []), ...toHandoffContexts(args.handoffFrom)]);
+    const handoffContexts = toHandoffContexts(args.handoffFrom);
+    const rootLinks = toOtelLinks([...(args.links ?? []), ...handoffContexts]);
     if (rootLinks.length > 0) rootOptions.links = rootLinks;
+    // Auto-parent the root under handoffFrom[0] (the first RESOLVABLE handoff
+    // context) so a downstream agent's trace NESTS under its caller with no
+    // app-side `context.with(...)` wrapper — the cross-service parentSpanId
+    // chain is what the platform reconstructs the topology from. That same
+    // upstream also stays an `agent_handoff` LINK (above), so marker-based
+    // reconstruction and existing assertions still hold; handoffFrom[1..] and
+    // every `links` entry remain links only (fan-in), never a parent. A declared
+    // handoffFrom[0] wins over any ambient active span — it's the explicit causal
+    // edge. When handoffFrom is empty/unresolvable, the root falls back to the
+    // active context (behavior unchanged).
+    const parentContext = handoffContexts[0] ?? otContext.active();
     this.rootSpan = tracer.startSpan(
       this.maskName(args.name ?? 'trace'),
-      Object.keys(rootOptions).length > 0 ? rootOptions : undefined
+      Object.keys(rootOptions).length > 0 ? rootOptions : undefined,
+      parentContext
     );
-    this.rootContext = otTrace.setSpan(otContext.active(), this.rootSpan);
+    this.rootContext = otTrace.setSpan(parentContext, this.rootSpan);
     this.applyTraceAttrs(this.rootSpan);
   }
 
@@ -287,6 +301,46 @@ export class Trace {
       options: { ...options, observationType: 'event' },
     });
     ev.end();
+  }
+
+  /**
+   * Opt-in ergonomic wrapper: open a child {@link Span} under this trace's root,
+   * run `fn` with that child ACTIVE in the ambient OTel context, and end it when
+   * `fn` settles. Because the child is active, in-process spans opened without an
+   * explicit parent and third-party OTel auto-instrumentation nest under it.
+   * Mirrors OTel's `tracer.startActiveSpan`. On a thrown error / rejected promise
+   * the child is marked ERROR and the error re-thrown. Additive — the plain
+   * {@link Trace.span} factory is unchanged and does NOT touch the ambient context.
+   */
+  startActiveSpan<T>(name: string, fn: (span: Span) => T): T;
+  startActiveSpan<T>(name: string, options: SpanOptions, fn: (span: Span) => T): T;
+  startActiveSpan<T>(
+    name: string,
+    optionsOrFn: SpanOptions | ((span: Span) => T),
+    maybeFn?: (span: Span) => T
+  ): T {
+    const fn = (typeof optionsOrFn === 'function' ? optionsOrFn : maybeFn) as (span: Span) => T;
+    const options = typeof optionsOrFn === 'function' ? undefined : optionsOrFn;
+    return runWithActiveSpan(this.span(name, options), fn);
+  }
+
+  /** Active-context counterpart of {@link Trace.generation} — see {@link Trace.startActiveSpan}. */
+  startActiveGeneration<T>(name: string, fn: (generation: Generation) => T): T;
+  startActiveGeneration<T>(
+    name: string,
+    options: GenerationOptions,
+    fn: (generation: Generation) => T
+  ): T;
+  startActiveGeneration<T>(
+    name: string,
+    optionsOrFn: GenerationOptions | ((generation: Generation) => T),
+    maybeFn?: (generation: Generation) => T
+  ): T {
+    const fn = (typeof optionsOrFn === 'function' ? optionsOrFn : maybeFn) as (
+      generation: Generation
+    ) => T;
+    const options = typeof optionsOrFn === 'function' ? undefined : optionsOrFn;
+    return runWithActiveSpan(this.generation(name, options), fn);
   }
 
   update(args: TraceUpdateArgs): this {

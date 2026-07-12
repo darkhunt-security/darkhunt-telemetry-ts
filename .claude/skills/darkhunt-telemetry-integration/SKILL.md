@@ -349,10 +349,11 @@ function openGeneration(
 }
 ```
 
-**Critical: capture `startTime = Date.now()` BEFORE any awaited LLM call.**
-Without `startTime`, the OTel span starts at construction time (post-LLM-call),
-so the recorded duration covers only ~0ms of bookkeeping instead of actual
-LLM time. Same applies to the trace root span.
+**Critical: capture `startTime = Date.now()` BEFORE any awaited LLM call** — _if_ you use the
+manual `trace.generation()` form. Without `startTime`, the OTel span starts at construction time
+(post-LLM-call), so the recorded duration covers only ~0ms of bookkeeping instead of actual LLM
+time. Same applies to the trace root span. **Better: prefer the active-context form (§6b), which
+times the span automatically and needs no `startTime`.**
 
 ### 6. End span with payload
 
@@ -375,6 +376,29 @@ trace.end();
 `update()` is for fields known at start; `end()` is for fields known when work
 finishes. You can pass everything to `end()` if there's no streaming
 intermediate state to record.
+
+### 6b. Prefer the active-context form (interop + automatic timing)
+
+The manual `trace.generation(name, { startTime })` → `.end()` pattern works, but the span is never
+the **active** OTel span, so (a) you must hand-capture `startTime`, and (b) third-party OTel
+auto-instrumentation (the LLM SDK's own spans, an HTTP client) can't nest under it — you get a
+walled-off tree. Prefer **`startActiveGeneration`** (and **`startActiveSpan`** for tool /
+retriever / guardrail spans): it runs your callback with the span **active** for the awaited call,
+ends it when the callback settles (marking ERROR on a throw), and times it automatically.
+
+```ts
+const answer = await trace.startActiveGeneration('answer', { model }, async (gen) => {
+  gen.update({ inputMessages }); // known at start
+  const r = await llm(prompt); // span is ACTIVE here → auto-instrumentation nests; timing is real
+  gen.end({ model, outputMessages: r.messages, usage: r.usage });
+  return r.text; // becomes the return value of startActiveGeneration
+});
+```
+
+No `startTime` to capture, and anything OTel-instrumented inside the callback nests under the
+generation. `Trace.startActiveSpan(name, opts, fn)` / `Span.startActiveSpan(...)` are the same for
+non-LLM spans. (The manual `trace.generation()` / `trace.span()` factories still exist for
+streaming, or when you must hold a span open across separate calls.)
 
 **Strict-TypeScript projects: two `tsc` errors the snippets above can trigger.**
 Many host projects compile with `exactOptionalPropertyTypes` and
@@ -710,25 +734,60 @@ When the service is one agent in a **multi-agent system**, the platform reconstr
 **agent topology** — who handed off to whom. **Identity:** one `serviceName` per agent (e.g.
 `finance.quant`) — that is the topology node.
 
-### ⚠️ The edges come from the `parentSpanId` chain — you MUST nest (verified against the live trace-hub, 2026-07-08)
+### How much do you actually need? (least → most divergence from vanilla OTel)
 
-> **This is the single most important thing to get right, and the easiest to get wrong.** The
-> deployed trace-hub builds agent→agent edges by walking the **`parentSpanId` cross-service
-> chain** (each agent's entry span must be a **child of its caller's span**). It does **not**
-> draw the graph from `agent_handoff` span links — it stores links but the graph builder uses
-> parent-child. So if each agent opens its **own root trace** and you only wire `handoffFrom`
-> links, **the nodes render as disconnected islands** (real bug we hit: ingestion looked
-> perfect — per-agent generations, tools, models, cost all correct — but the Topology tab
-> showed unconnected cards).
+Reconstruction is built to work off **standard OTel signals**, so the baseline needs **nothing**
+Darkhunt-specific. Add custom bits only to sharpen the graph — pick the lowest level that gets you
+the graph you need:
 
-**To connect the graph, NEST each agent's trace under its caller.** Two things are required:
+| Level                 | You emit                                                                                | You get                                                                          | Darkhunt-specific?                                                                     |
+| --------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| **0 — zero friction** | Plain **nested** OTel spans + one `service.name` per agent (normal context propagation) | The **call-graph** topology (walked from the `parentSpanId` cross-service chain) | **Nothing** — it's just OTel                                                           |
+| **1 — low friction**  | + standard OTel **span links** (consumer → producer) where data-flow ≠ call-flow        | The **data-flow** topology (fan-in, real producer, loops)                        | Standard OTel links; **no marker required** — an unmarked link is treated as a handoff |
+| **2 — precision**     | + `darkhunt.link.kind = agent_handoff` on those links                                   | Same, disambiguated from non-handoff link uses (batch/messaging)                 | The marker attribute                                                                   |
+| **3 — ergonomics**    | The SDK's `trace.handoffToken()` / `handoffFrom`                                        | Same, with fan-in arrays + token plumbing handled for you                        | The SDK helpers                                                                        |
+
+**Principle: minimum divergence.** Nesting (Level 0) is _standard OTel context propagation_, not a
+Darkhunt invention — a normally-instrumented app already produces it, and for a **linear** pipeline
+the call graph **is** the data-flow graph, so you're done with zero custom code. Reach for **links**
+(Level 1) only where the data flow genuinely differs from the call flow — fan-in from several
+services, a loop, an async producer→consumer. The **marker** (Level 2) and the **SDK helpers**
+(Level 3) are optional sugar: the marker only to disambiguate handoff links from other OTel link
+uses; the helpers for fan-in-array + token ergonomics. Don't push an integrator up the ladder further
+than their graph requires.
+
+### ⚠️ Each agent's entry span must SURVIVE ingestion — nest, or carry a link (verified against the pipeline, 2026-07)
+
+> **This is the single most important thing to get right.** Reconstruction is **links-first with a
+> `parentSpanId`-chain fallback**: an `agent_handoff` link draws the edge if the span has one, else
+> the nearest cross-service ancestor along the parent chain does. **Either way the edge only forms if
+> the upstream span it points at still exists** — and ingestion **drops a contentless span** (an
+> agent's root span usually is — its generations/tools are child spans) **unless** it is a
+> _cross-service entry_ (has a `parentSpanId` into another service). So the failure mode is:
+>
+> - **Nest** (standard OTel context propagation) → each agent root is a cross-service entry → kept →
+>   the parent chain (and any links) connect it. Robust, zero-config default.
+> - **Don't nest AND don't link** (each agent opens its own root trace, no links) → the contentless
+>   roots are **dropped** → nothing to connect → **disconnected islands** (a real bug we hit:
+>   ingestion looked perfect — per-agent generations/tools/models/cost all correct — but the Topology
+>   tab showed unconnected cards).
+>
+> Nesting is the safe path because it satisfies **both** the parent-chain reconstruction **and** span
+> retention at once. _(An earlier version of this note said "the builder uses parent-child, not
+> links." That was imprecise — the builder **does** honor `agent_handoff` links; the islands came
+> from the content filter dropping the link **targets**, which nesting prevents. Links-only can work
+> if the link targets are retained — but that leans on ingestion keeping link-carrying roots, so
+> nesting stays the recommended default.)_
+
+**The simplest way to connect the graph — and the closest to vanilla OTel — is to NEST each agent's
+trace under its caller.** Two things make that happen:
 
 1. **A global OTel context manager + propagator must be registered** — otherwise `context.with()`
    is a no-op and every `dh.trace()` starts a fresh root with no parent. **As of SDK ≥ 0.5.4 the SDK
    does this for you automatically** when you construct `new DarkhuntTelemetry()` (it registers the
    global context manager + W3C propagator, without registering its TracerProvider globally, so it
    won't hijack a host's OTel). So on current versions there is **nothing to wire up** — just
-   construct the client before the first `openTrace`.
+   construct the client before the first `client.trace(...)` call.
 
    Only if the target app **manages its own OTel context** (or is pinned to SDK < 0.5.4) do you
    register it yourself, once, before any client/trace — and opt the SDK out with
@@ -744,37 +803,26 @@ When the service is one agent in a **multi-agent system**, the platform reconstr
    propagation.setGlobalPropagator(new W3CTraceContextPropagator());
    ```
 
-2. **Create each agent's trace inside its caller's context**, so the agent's root span gets a
-   `parentSpanId` and shares the caller's `trace_id`. The caller's token is just its
-   `handoffToken()` (a W3C traceparent). `Trace.span()/generation()` parent under the trace's
-   **own** root (`parentContext: this.rootContext`), so ONLY the agent root needs the caller
-   context — a one-liner wrapper does it:
+2. **Nesting is automatic — just pass `handoffFrom` to `client.trace()`.**
+   `client.trace({ handoffFrom: [callerToken] })` makes the agent's root span a **child** of
+   `handoffFrom[0]` on its own (`parentSpanId` set, shared `trace_id`) AND keeps it as an
+   `agent_handoff` link. The caller's token is its `handoffToken()` (a W3C traceparent).
+   `Trace.span()/generation()` already parent under the trace's own root, so the SDK only has to
+   parent the root — which it does from `handoffFrom[0]`. You don't wrap `client.trace()` in anything;
+   the context plumbing is inside the SDK. `handoffFrom[0]` is the **parent edge** (the topology
+   arrow); any further entries stay supplementary links (fan-in). A whole task lands in **one trace**,
+   nested — verify with: all of a task's spans share a single `trace_id`.
 
-   ```ts
-   // openTrace = drop-in for dh.trace(args), but nested under args.handoffFrom[0].
-   export function openTrace(args) {
-     const parent = args?.handoffFrom?.[0]; // the DIRECT upstream token
-     if (typeof parent !== 'string' || !parent) return dh.trace(args);
-     const ctx = propagation.extract(context.active(), { traceparent: parent });
-     return context.with(ctx, () => dh.trace(args)); // agent root → child of caller
-   }
-   ```
-
-   Use `openTrace(...)` instead of `dh.trace(...)` in every agent. `handoffFrom[0]` becomes the
-   **parent edge** (the topology arrow); any further `handoffFrom` entries stay as supplementary
-   links (fan-in). A whole task then lands in **one trace**, nested — verify with: all of a
-   task's spans share a single `trace_id`.
-
-**Emit the handoff token** the same two-call way (it's what feeds `openTrace`'s parent):
+**Emit the handoff token** the same way (it's what feeds the downstream's `handoffFrom`):
 
 ```ts
-// Upstream agent: expose its entry-span token.
-const trace = openTrace({ name: 'research-agent', sessionId, userId, handoffFrom });
+// Upstream agent: nest under its own caller, then expose its entry-span token.
+const trace = client.trace({ name: 'research-agent', sessionId, userId, handoffFrom });
 // ...work...
 return { ...result, handoff: trace.handoffToken() }; // opaque W3C-traceparent string
 
-// Downstream agent: its DIRECT upstream is handoffFrom[0] (the parent); more = fan-in links.
-const trace = openTrace({
+// Downstream agent: handoffFrom[0] is the parent (nests); more entries = fan-in links.
+const trace = client.trace({
   name: 'analyst-agent',
   handoffFrom: [research.handoff, quant.handoff],
   sessionId,
@@ -782,24 +830,87 @@ const trace = openTrace({
 });
 ```
 
+### Keep the token out of business signatures — carry it in ambient context
+
+The token is observability plumbing, so it should never be a typed `handoff` **parameter** on your
+agent functions, entry inputs, message/return types, or graph state. Threading it there couples
+business code to telemetry — the tell is that _removing_ telemetry later forces edits to domain
+signatures across every agent. Instead, carry it the way OTel carries trace context: **out-of-band,
+in an ambient async-context store**, so agents read the upstream token and publish their own without
+it ever appearing in a signature.
+
+```ts
+// handoff-context.ts — a tiny AsyncLocalStorage carrier (mirrors Temporal's `currentHandoff()`).
+import { AsyncLocalStorage } from 'node:async_hooks';
+const als = new AsyncLocalStorage<{ token?: string }>();
+export const withHandoff = <T>(token: string | undefined, fn: () => T): T => als.run({ token }, fn);
+export const currentHandoff = (): string | undefined => als.getStore()?.token;
+export const publishHandoff = (token: string): void => {
+  const s = als.getStore();
+  if (s) s.token = token;
+};
+```
+
+```ts
+// The gateway seeds the scope with its root token; agents pass only DATA (no `handoff` arg).
+await withHandoff(root.handoffToken(), async () => {
+  const plan = await coordinator(task);
+  const weather = await geodata(plan);
+  return advisor(weather);
+});
+
+// Each agent reads its upstream from ambient context and publishes its own for whatever runs next:
+function coordinator(task) {
+  const parent = currentHandoff();
+  const trace = client.trace({
+    name: 'coordinator-agent',
+    sessionId,
+    userId,
+    handoffFrom: parent ? [parent] : [],
+  });
+  publishHandoff(trace.handoffToken());
+  // ...business work; returns business data only...
+}
+```
+
+**Cross-process is the same idea one level up:** the token rides the transport's metadata channel
+(next section), and the consumer lifts it off the header/field into `handoffFrom` (or an ambient
+store) _on entry_ — it still never becomes a business field. The Temporal path already does exactly
+this: an activity interceptor reads the Temporal Header into `currentHandoff()`, and the activity
+passes that to `client.trace({ handoffFrom })`.
+
 ### Carrying the handoff token across each transport
 
 **The token is an opaque W3C `traceparent` STRING, and it belongs in the transport's METADATA /
 HEADER channel — NOT in the business payload (args / body / message data).** Producer mints it with
-`trace.handoffToken()` (or `spanHandoff(span)`); consumer nests under it with
-`openTrace({ handoffFrom: [token] })`. Carry it **out of band** on every transport, exactly like the
+`trace.handoffToken()` (or `span.handoffToken()`); consumer nests under it with
+`client.trace({ handoffFrom: [token] })`. Carry it **out of band** on every transport, exactly like the
 HTTP `traceparent` header — smuggling trace context into your domain args/body couples business data
 to observability plumbing. The transport is otherwise irrelevant; the only thing that changes is
 which metadata channel carries the string. Every transport still needs the two universals above
-(a global OTel context manager — the SDK auto-registers it as of ≥ 0.5.4; and one `service.name`
-per agent).
+(a global OTel context manager — the SDK auto-registers it; and one `service.name` per agent).
 
-| Transport                         | Metadata / header channel (NOT the payload)                                                                                        | Producer                                        | Consumer                                                |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------- |
-| **Temporal**                      | a **Temporal Header** (context channel, via an interceptor) — NOT the workflow args                                                | interceptor sets the header on the call         | activity interceptor reads it → `openTrace`             |
-| **HTTP**                          | the standard **`traceparent` header** (W3C Trace Context)                                                                          | caller sets `headers: { traceparent: handoff }` | handler reads `req.header('traceparent')` → `openTrace` |
-| **Queue** (Redis/Kafka/…)         | a **message header / attribute** (Kafka headers, SQS attributes, NATS/AMQP headers; a dedicated Redis-stream field) — NOT the body | put the token in the message metadata           | read the header → `openTrace({ handoffFrom: [token] })` |
-| **In-process graph** (LangGraph…) | a field in the **graph state**                                                                                                     | node writes `state.handoff`                     | node reads `state.handoff` → `openTrace`                |
+**Don't hand-roll the metadata plumbing — the SDK ships it.** Instead of reading/writing header/field
+strings yourself, use the official helpers:
+
+- **HTTP** — `@darkhunt-security/telemetry/transports`: `handoffToHttpHeaders(token, headers?)` (producer)
+  and `handoffFromHttpHeaders(headers)` (consumer; case-insensitive, accepts Express `req.headers` or a
+  WHATWG `Headers`).
+- **Queue** — `@darkhunt-security/telemetry/transports`: `handoffToMessageMeta(token, meta?)` (producer,
+  keyed by `HANDOFF_MESSAGE_META_KEY`, kept out of `data`), `handoffFromMessageMeta(meta)` and
+  `handoffsFromMessages(metas)` (consumer; the latter is the **fan-in** reader → an ordered, de-duped array).
+- **Temporal** — `@darkhunt-security/telemetry/temporal`: `handoffWorkflowInterceptors` +
+  `handoffActivityInterceptors()` + `currentHandoff()` carry the token in a **Temporal Header**;
+  `childArgs(input, handoffFrom)` authors a per-edge override. Register the workflow interceptor from the
+  **sandbox-safe** subpath `@darkhunt-security/telemetry/temporal/workflow` (the worker-side barrel pulls
+  in `node:async_hooks` and must never be imported from workflow code). See the per-transport notes below.
+
+| Transport                         | Metadata / header channel (NOT the payload)                                                                       | Producer                                                         | Consumer                                                                |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **Temporal**                      | a **Temporal Header** (via `handoffWorkflowInterceptors` / `handoffActivityInterceptors`) — NOT the workflow args | interceptors set the header; `childArgs` for a per-edge override | `currentHandoff()` → `client.trace({ handoffFrom })`                    |
+| **HTTP**                          | the standard **`traceparent` header** (W3C Trace Context)                                                         | `handoffToHttpHeaders(handoff, headers)`                         | `handoffFromHttpHeaders(req.headers)` → `client.trace({ handoffFrom })` |
+| **Queue** (Redis/Kafka/…)         | a **message header / attribute** kept out of `data` (`HANDOFF_MESSAGE_META_KEY`)                                  | `handoffToMessageMeta(handoff)`                                  | `handoffsFromMessages(metas)` → `client.trace({ handoffFrom })`         |
+| **In-process graph** (LangGraph…) | a field in the **graph state**                                                                                    | node writes `state.handoff`                                      | node reads `state.handoff` → `client.trace({ handoffFrom })`            |
 
 - **HTTP** — use the **standard `traceparent` header**, NOT a body field. It's the W3C convention, so
   any OTel-instrumented service propagates it for free, and the request body stays pure business data.
@@ -814,47 +925,40 @@ per agent).
   tokens. The queue itself is invisible to the graph (only `publish`/`consume` tool spans); edges stay
   agent→agent.
 - **Temporal** — the token belongs in a **Temporal Header**, not the workflow args (your business
-  inputs). Temporal Headers are a first-class metadata channel propagated through **interceptors** —
-  `@temporalio/interceptors-opentelemetry` does exactly this for OTel context (workflow→activity) out
-  of the box. Caveat: that interceptor auto-nests each span under its **immediate caller** (a
-  call-graph/star shape); for deliberate agent→agent edges (link to the real producer; self-loops vs
-  back-edges — see below) set your OWN header carrying the chosen parent token via a custom
-  interceptor and read it in the activity. And **never instrument workflow code** (deterministic
-  sandbox — no network/timers, so no SDK): telemetry lives in activities + the gateway; an activity
-  retry re-runs its LLM+tool loop and re-emits spans.
+  inputs). The SDK ships the interceptors: register `handoffWorkflowInterceptors` (from the sandbox-safe
+  `@darkhunt-security/telemetry/temporal/workflow` subpath) as a `workflowModules` entry and
+  `handoffActivityInterceptors()` on the activity side; the activity reads its upstream token via
+  `currentHandoff()` and passes it as `handoffFrom` to `client.trace(...)`. For a deliberate agent→agent
+  edge that differs from the call graph (link to the real producer; self-loops vs back-edges — see below),
+  the coordinator authors a **per-edge override** with `childArgs(input, [chosenToken])` on the
+  `executeChild` call — the workflow interceptor relocates it into the header and strips it from the
+  child's args. And **never instrument workflow code** (deterministic sandbox — no network/timers, so no
+  SDK): telemetry lives in activities + the gateway; an activity retry re-runs its LLM+tool loop and
+  re-emits spans.
 - **In-process graph** (LangGraph, etc.) — there's no wire header in-process, so the token rides in
   the graph **state** (or ambient OTel context). Still give each node **its own `service.name`
   client** (`agentClient('domain.node')`) and thread the token node→node (a node writes its
   `handoffToken()` into state; the next reads it as `handoffFrom`), or the nodes collapse into one
   undifferentiated blob.
 
-**Reference integration — `temporal-demo` (`/Users/sergey/proj/darkhunt/temporal-demo`), one live
-example per transport:** core helpers `src/telemetry.ts` (`openTrace`/`spanHandoff`/`agentClient`) +
-`src/otel.ts` (globals); **Temporal** → `src/domains/security/{workflows,activities}/`; **HTTP header**
-→ `src/domains/healthcare/{http.ts,handlers.ts}`; **Redis queue** → `src/domains/devops/{bus.ts,handlers.ts}`;
-**LangGraph** → `src/domains/banking/graph.ts`. All four reconstruct into the identical topology.
-(Caveat: the demo's Temporal path currently threads the token as an activity **arg** for simplicity —
-the idiomatic channel is a Temporal Header via an interceptor as above; the queue path already keeps
-the token in a dedicated stream field, out of the JSON body.)
+  (The reference demo now uses these SDK helpers on every transport — the Temporal Header via
+  `handoffWorkflowInterceptors`/`handoffActivityInterceptors`, the HTTP `traceparent` header via
+  `handoffToHttpHeaders`/`handoffFromHttpHeaders`, and a dedicated Redis-stream field via
+  `handoffToMessageMeta`/`handoffsFromMessages` — so the token never rides in the business payload.)
 
-### The orchestrator/gateway node needs CONTENT or it disappears
+### The orchestrator/gateway node — hand off from its root
 
-The trace-hub keeps a span only if it has a `generation` (input/outputMessages) **or a `tool`**
-name — otherwise it's dropped (unless it's a cross-service boundary). A gateway/orchestrator that
-opens a **contentless root trace** gets filtered out, so its node vanishes AND its children lose
-their root edge. Fix: emit a **tool span** on it (e.g. a `dispatch` tool span with the task as
-`input`) and hand off from THAT span, not the root — build the token from the span's context:
+Ingestion **retains a trace ROOT span even when it's contentless** (the root anchors the topology), so
+a gateway/orchestrator that only fans work out survives on its own — just open the root and hand off
+from it. Put the task on the root's `input` so the node still carries content in the dashboard:
 
 ```ts
-const root = dh.trace({ name, sessionId, userId });
-const dispatch = root.span('dispatch', {
-  observationType: 'tool',
-  toolName: 'dispatch',
-  input: { task },
-});
-// spanHandoff: like handoffToken() but for a child span (uses otTrace.getSpanContext(span.context)).
-const handoff = spanHandoff(dispatch); // pass into the first agent's handoffFrom
+const root = dh.trace({ name, sessionId, userId, input: { task } });
+const handoff = root.handoffToken(); // pass into the first agent's handoffFrom
 ```
+
+A `dispatch` **tool span** on the gateway is optional — add one only to record an explicit dispatch
+action; to hand off from that span instead of the root, use `dispatch.handoffToken()`.
 
 ### Link to the REAL producing agent, not the orchestrator
 
@@ -921,11 +1025,12 @@ services show up unconnected; you flagged it and named the architectural work re
 
 **Gotchas (each was a real bug):**
 
-1. **Nodes disconnected → you forgot to nest** (SDK ≥ 0.5.4 registers the context manager for you; you
-   still must use `openTrace` to nest). Links alone don't
-   draw edges on this backend; the `parentSpanId` chain does. See the ⚠️ block above.
-2. **Gateway/orchestrator node missing → its span had no generation/tool content** and was filtered.
-   Give it a `dispatch` tool span and hand off from that span.
+1. **Nodes disconnected → each agent opened its own root trace with no nesting.** Nest by passing the
+   caller's token as `handoffFrom` to `client.trace(...)` (the SDK auto-nests + registers the context
+   manager for you). See the ⚠️ block above.
+2. **Gateway/orchestrator node missing** — hand off from `root.handoffToken()` (the root is retained
+   even when contentless). A `dispatch` tool span is optional — add one only to record an explicit
+   dispatch action.
 3. **Wrong arrows → linked to the orchestrator instead of the real producer.** Link where output→input.
 4. **Never link to a throwaway span.** `handoffToken()` targets the always-exported root span; a
    helper span created and `.end()`-ed immediately can be dropped on fast agents → dangling link.
@@ -1096,9 +1201,9 @@ inputMessages, systemInstructions })` (known at start) → `.end({ outputMessage
    (also a `tsc` error). To record an error, set `level: 'ERROR'` + `statusMessage` on a **span**
    or generation, not on the trace.
 9. **Nodes disconnected / gateway node missing / wrong arrows** — see the ⚠️ topology block above.
-   These were the biggest real bugs: you must NEST via `parentSpanId` (the SDK ≥ 0.5.4 registers the
-   context manager; you wrap with `openTrace`), give the orchestrator a tool span, link to the real producer, and use self-loops
-   (not per-round back-edges) for deep loops.
+   You must NEST via `parentSpanId` — pass the caller's token as `handoffFrom` to `client.trace(...)`
+   (the SDK registers the context manager and auto-nests), hand off from the orchestrator's root,
+   link to the real producer, and use self-loops (not per-round back-edges) for deep loops.
 10. **Reusing an existing app / reaching for raw REST.** Two setup mistakes from a real run
     (see step 2b): (a) grabbing a pre-existing `applicationId` instead of **creating a new,
     dedicated OBSERVABILITY app** — the integration's traces end up in the wrong scope; (b)
