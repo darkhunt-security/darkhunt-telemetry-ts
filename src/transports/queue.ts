@@ -65,7 +65,7 @@ export function handoffToMessageMeta(
   token: HandoffToken,
   meta?: Record<string, string>
 ): Record<string, string> {
-  return { ...(meta ?? {}), [HANDOFF_MESSAGE_META_KEY]: token };
+  return { ...meta, [HANDOFF_MESSAGE_META_KEY]: token };
 }
 
 /**

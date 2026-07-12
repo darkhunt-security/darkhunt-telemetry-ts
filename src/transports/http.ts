@@ -41,7 +41,7 @@ export function handoffToHttpHeaders(
   token: HandoffToken,
   headers?: Record<string, string>
 ): Record<string, string> {
-  return { ...(headers ?? {}), [TRACEPARENT_HEADER]: token };
+  return { ...headers, [TRACEPARENT_HEADER]: token };
 }
 
 /**
@@ -57,7 +57,7 @@ export function handoffFromHttpHeaders(headers: HttpHeadersLike): HandoffToken |
   for (const [key, value] of Object.entries(headers)) {
     if (key.toLowerCase() !== TRACEPARENT_HEADER) continue;
     const raw = Array.isArray(value) ? value[0] : value;
-    return raw ? raw : undefined;
+    return raw || undefined;
   }
   return undefined;
 }

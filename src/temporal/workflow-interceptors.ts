@@ -17,17 +17,17 @@
 // `interceptors` (the name Temporal looks up), so it can be used as-is when the
 // Darkhunt handoff is your only workflow interceptor.
 
-import { defaultPayloadConverter } from '@temporalio/workflow';
-import type { Payload } from '@temporalio/workflow';
-import type {
-  ActivityInput,
-  Next,
-  StartChildWorkflowExecutionInput,
-  WorkflowExecuteInput,
-  WorkflowInboundCallsInterceptor,
-  WorkflowInterceptors,
-  WorkflowInterceptorsFactory,
-  WorkflowOutboundCallsInterceptor,
+import {
+  defaultPayloadConverter,
+  type ActivityInput,
+  type Next,
+  type Payload,
+  type StartChildWorkflowExecutionInput,
+  type WorkflowExecuteInput,
+  type WorkflowInboundCallsInterceptor,
+  type WorkflowInterceptors,
+  type WorkflowInterceptorsFactory,
+  type WorkflowOutboundCallsInterceptor,
 } from '@temporalio/workflow';
 import { HANDOFF_HEADER, HANDOFF_META } from './handoff-header.js';
 

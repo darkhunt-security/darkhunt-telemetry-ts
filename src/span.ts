@@ -246,7 +246,69 @@ export function runWithActiveSpan<S extends Span, T>(span: S, fn: (span: S) => T
   });
 }
 
-export class Span {
+/**
+ * Resolve the overloaded `(name, fn)` / `(name, options, fn)` argument shape shared
+ * by every `startActiveSpan` / `startActiveGeneration` entry point, open the child
+ * via `factory`, and run it active with {@link runWithActiveSpan}. Both {@link Trace}
+ * and {@link Span} delegate their bodies here so the resolution lives in one place.
+ */
+function runActiveChild<C extends Span, O, T>(
+  factory: (name: string, options?: O) => C,
+  name: string,
+  optionsOrFn: O | ((child: C) => T),
+  maybeFn?: (child: C) => T
+): T {
+  const fn = (typeof optionsOrFn === 'function' ? optionsOrFn : maybeFn) as (child: C) => T;
+  const options = typeof optionsOrFn === 'function' ? undefined : (optionsOrFn as O);
+  return runWithActiveSpan(factory(name, options), fn);
+}
+
+/**
+ * Shared base for the two things you can open active children under — a {@link Trace}
+ * (children nest under its root) and a {@link Span} (children nest under it). Each
+ * subclass supplies the plain {@link span} / {@link generation} factories; this base
+ * adds the `startActive*` sugar once so it is not copied between the two classes.
+ */
+export abstract class ActiveChildHost {
+  abstract span(name: string, options?: SpanOptions): Span;
+  abstract generation(name: string, options?: GenerationOptions): Generation;
+
+  /**
+   * Opt-in ergonomic wrapper: open a child {@link Span} under this node, run `fn`
+   * with that child ACTIVE in the ambient OTel context, and end it when `fn`
+   * settles. Because the child is active, in-process spans opened without an
+   * explicit parent and third-party OTel auto-instrumentation nest under it.
+   * Mirrors OTel's `tracer.startActiveSpan`. On a thrown error / rejected promise
+   * the child is marked ERROR and the error re-thrown. Additive — the plain
+   * {@link span} factory is unchanged and does NOT touch the ambient context.
+   */
+  startActiveSpan<T>(name: string, fn: (span: Span) => T): T;
+  startActiveSpan<T>(name: string, options: SpanOptions, fn: (span: Span) => T): T;
+  startActiveSpan<T>(
+    name: string,
+    optionsOrFn: SpanOptions | ((span: Span) => T),
+    maybeFn?: (span: Span) => T
+  ): T {
+    return runActiveChild((n, o) => this.span(n, o), name, optionsOrFn, maybeFn);
+  }
+
+  /** Active-context counterpart of {@link generation} — see {@link startActiveSpan}. */
+  startActiveGeneration<T>(name: string, fn: (generation: Generation) => T): T;
+  startActiveGeneration<T>(
+    name: string,
+    options: GenerationOptions,
+    fn: (generation: Generation) => T
+  ): T;
+  startActiveGeneration<T>(
+    name: string,
+    optionsOrFn: GenerationOptions | ((generation: Generation) => T),
+    maybeFn?: (generation: Generation) => T
+  ): T {
+    return runActiveChild((n, o) => this.generation(n, o), name, optionsOrFn, maybeFn);
+  }
+}
+
+export class Span extends ActiveChildHost {
   protected readonly tracer: Tracer;
   protected readonly traceRef: Trace;
   protected readonly otelSpan: OtelSpan;
@@ -254,6 +316,7 @@ export class Span {
   protected ended = false;
 
   constructor(args: SpanCtorArgs) {
+    super();
     this.tracer = args.tracer;
     this.traceRef = args.trace;
     const parentCtx = args.parentContext ?? otContext.active();
@@ -328,46 +391,6 @@ export class Span {
       options: { ...options, observationType: 'event' },
     });
     ev.end();
-  }
-
-  /**
-   * Opt-in ergonomic wrapper: open a child {@link Span} under this span, run `fn`
-   * with that child ACTIVE in the ambient OTel context, and end it when `fn`
-   * settles. Because the child is active, in-process spans opened without an
-   * explicit parent and third-party OTel auto-instrumentation nest under it.
-   * Mirrors OTel's `tracer.startActiveSpan`. On a thrown error / rejected promise
-   * the child is marked ERROR and the error re-thrown. Additive — the plain
-   * {@link Span.span} factory is unchanged and does NOT touch the ambient context.
-   */
-  startActiveSpan<T>(name: string, fn: (span: Span) => T): T;
-  startActiveSpan<T>(name: string, options: SpanOptions, fn: (span: Span) => T): T;
-  startActiveSpan<T>(
-    name: string,
-    optionsOrFn: SpanOptions | ((span: Span) => T),
-    maybeFn?: (span: Span) => T
-  ): T {
-    const fn = (typeof optionsOrFn === 'function' ? optionsOrFn : maybeFn) as (span: Span) => T;
-    const options = typeof optionsOrFn === 'function' ? undefined : optionsOrFn;
-    return runWithActiveSpan(this.span(name, options), fn);
-  }
-
-  /** Active-context counterpart of {@link Span.generation} — see {@link Span.startActiveSpan}. */
-  startActiveGeneration<T>(name: string, fn: (generation: Generation) => T): T;
-  startActiveGeneration<T>(
-    name: string,
-    options: GenerationOptions,
-    fn: (generation: Generation) => T
-  ): T;
-  startActiveGeneration<T>(
-    name: string,
-    optionsOrFn: GenerationOptions | ((generation: Generation) => T),
-    maybeFn?: (generation: Generation) => T
-  ): T {
-    const fn = (typeof optionsOrFn === 'function' ? optionsOrFn : maybeFn) as (
-      generation: Generation
-    ) => T;
-    const options = typeof optionsOrFn === 'function' ? undefined : optionsOrFn;
-    return runWithActiveSpan(this.generation(name, options), fn);
   }
 
   update(options: SpanUpdateOptions): this {

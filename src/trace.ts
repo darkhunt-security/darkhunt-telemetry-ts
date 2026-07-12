@@ -12,9 +12,9 @@ import {
 import { ATTR } from './attributes.js';
 import type { Sanitizer } from './masking/index.js';
 import {
+  ActiveChildHost,
   applyMetadataAttrs,
   Generation,
-  runWithActiveSpan,
   safeJsonStringify,
   Span,
   spanContextToToken,
@@ -152,7 +152,7 @@ export interface TraceUpdateArgs {
   output?: unknown;
 }
 
-export class Trace {
+export class Trace extends ActiveChildHost {
   private readonly tracer: Tracer;
   private readonly rootSpan: OtelSpan;
   private readonly rootContext: Context;
@@ -174,6 +174,7 @@ export class Trace {
   private _output?: unknown;
 
   constructor(tracer: Tracer, args: TraceArgs, sanitizer?: Sanitizer) {
+    super();
     this.tracer = tracer;
     this._sanitizer = sanitizer;
     this._name = args.name;
@@ -301,46 +302,6 @@ export class Trace {
       options: { ...options, observationType: 'event' },
     });
     ev.end();
-  }
-
-  /**
-   * Opt-in ergonomic wrapper: open a child {@link Span} under this trace's root,
-   * run `fn` with that child ACTIVE in the ambient OTel context, and end it when
-   * `fn` settles. Because the child is active, in-process spans opened without an
-   * explicit parent and third-party OTel auto-instrumentation nest under it.
-   * Mirrors OTel's `tracer.startActiveSpan`. On a thrown error / rejected promise
-   * the child is marked ERROR and the error re-thrown. Additive — the plain
-   * {@link Trace.span} factory is unchanged and does NOT touch the ambient context.
-   */
-  startActiveSpan<T>(name: string, fn: (span: Span) => T): T;
-  startActiveSpan<T>(name: string, options: SpanOptions, fn: (span: Span) => T): T;
-  startActiveSpan<T>(
-    name: string,
-    optionsOrFn: SpanOptions | ((span: Span) => T),
-    maybeFn?: (span: Span) => T
-  ): T {
-    const fn = (typeof optionsOrFn === 'function' ? optionsOrFn : maybeFn) as (span: Span) => T;
-    const options = typeof optionsOrFn === 'function' ? undefined : optionsOrFn;
-    return runWithActiveSpan(this.span(name, options), fn);
-  }
-
-  /** Active-context counterpart of {@link Trace.generation} — see {@link Trace.startActiveSpan}. */
-  startActiveGeneration<T>(name: string, fn: (generation: Generation) => T): T;
-  startActiveGeneration<T>(
-    name: string,
-    options: GenerationOptions,
-    fn: (generation: Generation) => T
-  ): T;
-  startActiveGeneration<T>(
-    name: string,
-    optionsOrFn: GenerationOptions | ((generation: Generation) => T),
-    maybeFn?: (generation: Generation) => T
-  ): T {
-    const fn = (typeof optionsOrFn === 'function' ? optionsOrFn : maybeFn) as (
-      generation: Generation
-    ) => T;
-    const options = typeof optionsOrFn === 'function' ? undefined : optionsOrFn;
-    return runWithActiveSpan(this.generation(name, options), fn);
   }
 
   update(args: TraceUpdateArgs): this {
