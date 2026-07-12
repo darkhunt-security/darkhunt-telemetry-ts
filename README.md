@@ -150,39 +150,35 @@ Two things build the graph: **nesting** (draws the edges) and **handoff tokens**
 > agent's entry span must be a **child of its caller's span**. If every agent opens its own root
 > trace and you only wire span links, the nodes render as **disconnected islands**. So you must nest.
 
-The SDK builds a `TracerProvider` but doesn't register the global OTel context manager/propagator,
-so `context.with()` is a no-op by default. Register them **once**, before creating the client:
+Nesting relies on `context.with()`, which needs a global OTel context manager. The SDK builds its
+own `TracerProvider` (and never registers it globally, so it won't hijack a host app's OTel), so
+**as of v0.5.4 constructing a `DarkhuntTelemetry` client automatically registers the global context
+manager + W3C propagator for you** — nothing to wire up. (It's idempotent and won't override a
+context manager your app already installed.)
 
-```ts
-// src/otel.ts — run at startup, before src/telemetry.ts loads
-import { context, propagation } from '@opentelemetry/api';
-import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
-import { W3CTraceContextPropagator } from '@opentelemetry/core';
+If your app manages its own OTel context, opt out with `new DarkhuntTelemetry({ registerContextManager: false })`
+(or `DARKHUNT_REGISTER_CONTEXT_MANAGER=false`) and register your own — or call the SDK's helper
+explicitly: `import { registerOtelContextGlobals } from '@darkhunt-security/telemetry'`.
 
-context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
-propagation.setGlobalPropagator(new W3CTraceContextPropagator());
-```
-
-Then create each agent's trace **inside its caller's context**. The caller's token is its
-`handoffToken()` (a W3C traceparent). `Trace.span()/generation()` parent under the trace's own
-root, so only the root needs the caller's context — a one-line `openTrace` wrapper does it:
+Each agent's trace must be created **as a child of its caller**. The caller's token is its
+`handoffToken()` (a W3C traceparent). **As of v0.5.6 `dh.trace(...)` does this for you: when you
+pass `handoffFrom`, the root span is automatically parented under `handoffFrom[0]`** (the direct
+upstream) — it gets a `parentSpanId`, shares the caller's trace, and `handoffFrom[1..]` stay as
+fan-in links. No `context.with(...)` wrapper needed; just thread the tokens (§2). `handoffFrom[0]`
+also remains an `agent_handoff` link, so both the parent chain and the markers are present.
 
 ```ts
 // src/telemetry.ts
-import { context, propagation } from '@opentelemetry/api';
 import { DarkhuntTelemetry } from '@darkhunt-security/telemetry';
 
 export const dh = new DarkhuntTelemetry();
-
-// Drop-in for dh.trace(args), NESTED under args.handoffFrom[0] (the direct upstream), so the
-// agent's entry span gets a parentSpanId. handoffFrom[1..] stay as extra links (fan-in).
-export function openTrace(args) {
-  const parent = args?.handoffFrom?.[0];
-  if (typeof parent !== 'string' || !parent) return dh.trace(args); // gateway root / disabled
-  const ctx = propagation.extract(context.active(), { traceparent: parent });
-  return context.with(ctx, () => dh.trace(args));
-}
+// dh.trace({ handoffFrom: [callerToken] }) already nests under the caller — call it directly.
 ```
+
+> **Upgrading from an earlier version?** If you wrote an `openTrace` wrapper that did the
+> `propagation.extract` + `context.with` dance by hand, you can delete it and call `dh.trace(...)`
+> directly — the SDK now absorbs the nesting. Keeping the wrapper is harmless (it just re-extracts
+> the same context), but it's no longer required.
 
 ### 2. Thread the handoff tokens along your data flow
 
@@ -192,11 +188,11 @@ are **fan-in** links:
 ```ts
 // Upstream agent — return its handoff token so downstream agents nest under it.
 function research(input) {
-  const trace = openTrace({
+  const trace = dh.trace({
     name: 'research',
     sessionId: input.taskId,
     userId: input.userId,
-    handoffFrom: input.handoffFrom,
+    handoffFrom: input.handoffFrom, // auto-nests under handoffFrom[0]
   });
   // ...tool spans / generations...
   return { facts, handoff: trace.handoffToken() }; // opaque, serialisable string
@@ -204,7 +200,7 @@ function research(input) {
 
 // Downstream agent — declare who handed off to it.
 function analyst(input, research, quant) {
-  const trace = openTrace({
+  const trace = dh.trace({
     name: 'analyst',
     handoffFrom: [research.handoff, quant.handoff], // [0] research → parent edge; quant → fan-in link
     sessionId: input.taskId,
@@ -233,15 +229,9 @@ const dispatch = root.span('dispatch', {
   toolName: 'dispatch',
   input: { task },
 });
-const handoff = spanHandoff(dispatch); // → pass into the first agent's handoffFrom
-
-// spanHandoff: like handoffToken() but for a child span — build the traceparent from its context.
-import { trace as otTrace } from '@opentelemetry/api';
-export function spanHandoff(span) {
-  const sc = otTrace.getSpanContext(span.context);
-  if (!sc) return '';
-  return `00-${sc.traceId}-${sc.spanId}-${(sc.traceFlags & 0xff).toString(16).padStart(2, '0')}`;
-}
+// Hand off from the SPAN, not the trace root — `Span.handoffToken()` (≥ 0.5.5), the
+// span-level counterpart to `Trace.handoffToken()`, both produced via the OTel propagator.
+const handoff = dispatch.handoffToken(); // → pass into the first agent's handoffFrom
 ```
 
 ### What the graph shows — and how each shows up
@@ -256,8 +246,9 @@ export function spanHandoff(span) {
 
 ### Best practices
 
-- **Nest, don't just link.** Register the OTel globals + use `openTrace` (§1). Span links **alone**
-  leave nodes disconnected — the `parentSpanId` chain is what draws the edges.
+- **Nest, don't just link.** Pass `handoffFrom` to `dh.trace(...)` — it auto-nests under
+  `handoffFrom[0]` (§1). Span links **alone** leave nodes disconnected — the `parentSpanId` chain is
+  what draws the edges.
 - **Give the orchestrator/gateway span content** (a tool span, §3) or its node is dropped.
 - **Link to the REAL producer, not the orchestrator.** Thread the token where output→input. Linking
   a downstream agent back to the orchestrator (because it _spawned_ it) draws a plausible-but-wrong
@@ -270,8 +261,9 @@ export function spanHandoff(span) {
   root span; a short-lived helper span you `.end()` immediately can be dropped → **dangling link**.
 
 > **Reference integration.** The [`temporal-demo`](https://github.com/darkhunt-security) multi-agent
-> example wires all of this across 7 domains (fan-out, fan-in, retry/debate cycles, deep loops) —
-> see its `src/telemetry.ts` (`openTrace`/`spanHandoff`), `src/otel.ts`, and `src/domains/*/workflows/coordinator.ts`.
+> example wires all of this across 6 domains (fan-out, fan-in, retry/debate cycles, deep loops) over
+> several transports (Temporal, HTTP, Redis queue, LangGraph, in-process) — see its `src/telemetry.ts`
+> (`openTrace`) and `src/domains/*/` (per-transport handoff threading).
 
 ## Configuration
 

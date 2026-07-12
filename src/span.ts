@@ -1,18 +1,37 @@
 import {
   diag,
   context as otContext,
+  propagation,
+  ROOT_CONTEXT,
   trace as otTrace,
   SpanStatusCode,
   type Context,
   type Link,
   type Span as OtelSpan,
+  type SpanContext,
   type SpanOptions as OtelSpanOptions,
   type TimeInput,
   type Tracer,
 } from '@opentelemetry/api';
 import { ATTR, GEN_AI } from './attributes.js';
 import type { Sanitizer } from './masking/index.js';
-import type { Trace } from './trace.js';
+import type { HandoffToken, Trace } from './trace.js';
+
+/**
+ * Serialize a span context into a W3C `traceparent` string via the **global OTel
+ * propagator** (`propagation.inject`) — the idiomatic, symmetric counterpart to the
+ * `propagation.extract` on the consuming side. Falls back to building the traceparent
+ * directly only if no global propagator is registered (e.g. the SDK was constructed
+ * with `registerContextManager: false` and the host set none).
+ */
+export function spanContextToToken(sc: SpanContext | undefined): HandoffToken {
+  if (!sc?.traceId || !sc?.spanId) return '';
+  const carrier: Record<string, string> = {};
+  propagation.inject(otTrace.setSpanContext(ROOT_CONTEXT, sc), carrier);
+  if (carrier.traceparent) return carrier.traceparent;
+  const flags = (sc.traceFlags & 0xff).toString(16).padStart(2, '0');
+  return `00-${sc.traceId}-${sc.spanId}-${flags}`;
+}
 import type { Cost, Metadata, ObservationLevel, ObservationType, Usage } from './types.js';
 
 /**
@@ -173,7 +192,123 @@ export function toOtelLinks(contexts?: Context[]): Link[] {
   return links;
 }
 
-export class Span {
+/** Thenable check for the active-span runner: decides whether to end the span
+ *  now (synchronous return) or after the returned promise settles. */
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === 'object' || typeof value === 'function') &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
+/** Best-effort message for the ERROR status set when an active-span callback throws. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Run `fn` with `span` set ACTIVE in the ambient OTel context (via
+ * `context.with(span.context, ...)`), so in-process children created without an
+ * explicit parent — and third-party OTel auto-instrumentation — nest under it.
+ * The span is ended automatically when `fn` settles: synchronously on return, or
+ * when the returned promise resolves/rejects. On a thrown error or rejection the
+ * span is marked ERROR (with the message) and the error re-thrown. `span.end()`
+ * is idempotent, so a callback that ends the span itself (e.g. a `Generation`
+ * that needs to record usage/cost) is fully supported — its end wins.
+ *
+ * Shared by the `startActiveSpan` / `startActiveGeneration` helpers on both
+ * {@link Trace} and {@link Span}.
+ */
+export function runWithActiveSpan<S extends Span, T>(span: S, fn: (span: S) => T): T {
+  return otContext.with(span.context, () => {
+    let result: T;
+    try {
+      result = fn(span);
+    } catch (err) {
+      span.end({ level: 'ERROR', statusMessage: errorMessage(err) });
+      throw err;
+    }
+    if (isPromiseLike(result)) {
+      return result.then(
+        (value) => {
+          span.end();
+          return value;
+        },
+        (err) => {
+          span.end({ level: 'ERROR', statusMessage: errorMessage(err) });
+          throw err;
+        }
+      ) as unknown as T;
+    }
+    span.end();
+    return result;
+  });
+}
+
+/**
+ * Resolve the overloaded `(name, fn)` / `(name, options, fn)` argument shape shared
+ * by every `startActiveSpan` / `startActiveGeneration` entry point, open the child
+ * via `factory`, and run it active with {@link runWithActiveSpan}. Both {@link Trace}
+ * and {@link Span} delegate their bodies here so the resolution lives in one place.
+ */
+function runActiveChild<C extends Span, O, T>(
+  factory: (name: string, options?: O) => C,
+  name: string,
+  optionsOrFn: O | ((child: C) => T),
+  maybeFn?: (child: C) => T
+): T {
+  const fn = (typeof optionsOrFn === 'function' ? optionsOrFn : maybeFn) as (child: C) => T;
+  const options = typeof optionsOrFn === 'function' ? undefined : (optionsOrFn as O);
+  return runWithActiveSpan(factory(name, options), fn);
+}
+
+/**
+ * Shared base for the two things you can open active children under — a {@link Trace}
+ * (children nest under its root) and a {@link Span} (children nest under it). Each
+ * subclass supplies the plain {@link span} / {@link generation} factories; this base
+ * adds the `startActive*` sugar once so it is not copied between the two classes.
+ */
+export abstract class ActiveChildHost {
+  abstract span(name: string, options?: SpanOptions): Span;
+  abstract generation(name: string, options?: GenerationOptions): Generation;
+
+  /**
+   * Opt-in ergonomic wrapper: open a child {@link Span} under this node, run `fn`
+   * with that child ACTIVE in the ambient OTel context, and end it when `fn`
+   * settles. Because the child is active, in-process spans opened without an
+   * explicit parent and third-party OTel auto-instrumentation nest under it.
+   * Mirrors OTel's `tracer.startActiveSpan`. On a thrown error / rejected promise
+   * the child is marked ERROR and the error re-thrown. Additive — the plain
+   * {@link span} factory is unchanged and does NOT touch the ambient context.
+   */
+  startActiveSpan<T>(name: string, fn: (span: Span) => T): T;
+  startActiveSpan<T>(name: string, options: SpanOptions, fn: (span: Span) => T): T;
+  startActiveSpan<T>(
+    name: string,
+    optionsOrFn: SpanOptions | ((span: Span) => T),
+    maybeFn?: (span: Span) => T
+  ): T {
+    return runActiveChild((n, o) => this.span(n, o), name, optionsOrFn, maybeFn);
+  }
+
+  /** Active-context counterpart of {@link generation} — see {@link startActiveSpan}. */
+  startActiveGeneration<T>(name: string, fn: (generation: Generation) => T): T;
+  startActiveGeneration<T>(
+    name: string,
+    options: GenerationOptions,
+    fn: (generation: Generation) => T
+  ): T;
+  startActiveGeneration<T>(
+    name: string,
+    optionsOrFn: GenerationOptions | ((generation: Generation) => T),
+    maybeFn?: (generation: Generation) => T
+  ): T {
+    return runActiveChild((n, o) => this.generation(n, o), name, optionsOrFn, maybeFn);
+  }
+}
+
+export class Span extends ActiveChildHost {
   protected readonly tracer: Tracer;
   protected readonly traceRef: Trace;
   protected readonly otelSpan: OtelSpan;
@@ -181,6 +316,7 @@ export class Span {
   protected ended = false;
 
   constructor(args: SpanCtorArgs) {
+    super();
     this.tracer = args.tracer;
     this.traceRef = args.trace;
     const parentCtx = args.parentContext ?? otContext.active();
@@ -210,6 +346,16 @@ export class Span {
 
   get context(): Context {
     return this.ctx;
+  }
+
+  /**
+   * A serializable {@link HandoffToken} for THIS span (a W3C `traceparent`, produced via
+   * the global propagator). Hand it to a downstream agent's {@link TraceArgs.handoffFrom}
+   * to record a handoff from this span specifically — e.g. an orchestrator/gateway hands
+   * off from its `dispatch` tool span (a contentless root span would be filtered out).
+   */
+  handoffToken(): HandoffToken {
+    return spanContextToToken(otTrace.getSpanContext(this.ctx));
   }
 
   get trace(): Trace {

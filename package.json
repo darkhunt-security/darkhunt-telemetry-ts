@@ -1,6 +1,6 @@
 {
   "name": "@darkhunt-security/telemetry",
-  "version": "0.5.3",
+  "version": "0.5.5",
   "description": "TypeScript SDK for sending LLM traces, generations, and observations to the Darkhunt platform for persistence and security data enrichment. Built on OpenTelemetry primitives, with built-in client-side data masking.",
   "type": "module",
   "license": "Apache-2.0",
@@ -24,6 +24,29 @@
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./transports": {
+      "types": "./dist/transports/index.d.ts",
+      "import": "./dist/transports/index.js",
+      "default": "./dist/transports/index.js"
+    },
+    "./temporal": {
+      "types": "./dist/temporal/index.d.ts",
+      "import": "./dist/temporal/index.js",
+      "default": "./dist/temporal/index.js"
+    },
+    "./temporal/workflow": {
+      "types": "./dist/temporal/workflow-interceptors.d.ts",
+      "import": "./dist/temporal/workflow-interceptors.js",
+      "default": "./dist/temporal/workflow-interceptors.js"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "dist/",
     "LICENSE",
@@ -55,6 +78,8 @@
   "dependencies": {
     "@noble/hashes": "^1.8.0",
     "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/context-async-hooks": "^2.0.0",
+    "@opentelemetry/core": "^2.0.0",
     "@opentelemetry/otlp-transformer": "^0.218.0",
     "@opentelemetry/resources": "^2.0.0",
     "@opentelemetry/sdk-trace-base": "^2.0.0",
@@ -63,6 +88,9 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
+    "@temporalio/common": "^1.20.2",
+    "@temporalio/worker": "^1.20.2",
+    "@temporalio/workflow": "^1.20.2",
     "@types/node": "^25.0.0",
     "c8": "^11.0.0",
     "eslint": "^9.0.0",
@@ -73,5 +101,21 @@
     "typescript": "^5.9.0",
     "typescript-eslint": "^8.0.0",
     "yaml": "^2.8.4"
+  },
+  "peerDependencies": {
+    "@temporalio/common": ">=1.11.0 <2",
+    "@temporalio/worker": ">=1.11.0 <2",
+    "@temporalio/workflow": ">=1.11.0 <2"
+  },
+  "peerDependenciesMeta": {
+    "@temporalio/common": {
+      "optional": true
+    },
+    "@temporalio/worker": {
+      "optional": true
+    },
+    "@temporalio/workflow": {
+      "optional": true
+    }
   }
 }

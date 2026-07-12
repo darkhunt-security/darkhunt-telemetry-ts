@@ -1,6 +1,7 @@
 import {
   ROOT_CONTEXT,
   context as otContext,
+  propagation,
   trace as otTrace,
   type Context,
   type Span as OtelSpan,
@@ -11,10 +12,12 @@ import {
 import { ATTR } from './attributes.js';
 import type { Sanitizer } from './masking/index.js';
 import {
+  ActiveChildHost,
   applyMetadataAttrs,
   Generation,
   safeJsonStringify,
   Span,
+  spanContextToToken,
   toOtelLinks,
   type GenerationOptions,
   type SpanOptions,
@@ -28,8 +31,13 @@ import type { Metadata, ObservationType } from './types.js';
  */
 export type HandoffToken = string;
 
-/** Parse a {@link HandoffToken} back into an OTel context carrying its span context. */
+/** Parse a {@link HandoffToken} back into an OTel context carrying its span context —
+ *  via the global propagator (`propagation.extract`), symmetric with the inject on the
+ *  producing side. Falls back to direct parsing only if no global propagator is set. */
 function tokenToContext(token: HandoffToken): Context | undefined {
+  const ctx = propagation.extract(ROOT_CONTEXT, { traceparent: token });
+  const sc = otTrace.getSpanContext(ctx);
+  if (sc?.traceId && sc?.spanId) return ctx;
   const parts = token.split('-');
   if (parts.length < 4) return undefined;
   const [, traceId, spanId, flags] = parts;
@@ -144,7 +152,7 @@ export interface TraceUpdateArgs {
   output?: unknown;
 }
 
-export class Trace {
+export class Trace extends ActiveChildHost {
   private readonly tracer: Tracer;
   private readonly rootSpan: OtelSpan;
   private readonly rootContext: Context;
@@ -166,6 +174,7 @@ export class Trace {
   private _output?: unknown;
 
   constructor(tracer: Tracer, args: TraceArgs, sanitizer?: Sanitizer) {
+    super();
     this.tracer = tracer;
     this._sanitizer = sanitizer;
     this._name = args.name;
@@ -189,13 +198,26 @@ export class Trace {
 
     const rootOptions: OtelSpanOptions = {};
     if (args.startTime !== undefined) rootOptions.startTime = args.startTime;
-    const rootLinks = toOtelLinks([...(args.links ?? []), ...toHandoffContexts(args.handoffFrom)]);
+    const handoffContexts = toHandoffContexts(args.handoffFrom);
+    const rootLinks = toOtelLinks([...(args.links ?? []), ...handoffContexts]);
     if (rootLinks.length > 0) rootOptions.links = rootLinks;
+    // Auto-parent the root under handoffFrom[0] (the first RESOLVABLE handoff
+    // context) so a downstream agent's trace NESTS under its caller with no
+    // app-side `context.with(...)` wrapper — the cross-service parentSpanId
+    // chain is what the platform reconstructs the topology from. That same
+    // upstream also stays an `agent_handoff` LINK (above), so marker-based
+    // reconstruction and existing assertions still hold; handoffFrom[1..] and
+    // every `links` entry remain links only (fan-in), never a parent. A declared
+    // handoffFrom[0] wins over any ambient active span — it's the explicit causal
+    // edge. When handoffFrom is empty/unresolvable, the root falls back to the
+    // active context (behavior unchanged).
+    const parentContext = handoffContexts[0] ?? otContext.active();
     this.rootSpan = tracer.startSpan(
       this.maskName(args.name ?? 'trace'),
-      Object.keys(rootOptions).length > 0 ? rootOptions : undefined
+      Object.keys(rootOptions).length > 0 ? rootOptions : undefined,
+      parentContext
     );
-    this.rootContext = otTrace.setSpan(otContext.active(), this.rootSpan);
+    this.rootContext = otTrace.setSpan(parentContext, this.rootSpan);
     this.applyTraceAttrs(this.rootSpan);
   }
 
@@ -223,10 +245,7 @@ export class Trace {
    * `agent_handoff` span link. The root span is always exported, so it resolves.
    */
   handoffToken(): HandoffToken {
-    const sc = otTrace.getSpanContext(this.rootContext);
-    if (!sc) return '';
-    const flags = (sc.traceFlags & 0xff).toString(16).padStart(2, '0');
-    return `00-${sc.traceId}-${sc.spanId}-${flags}`;
+    return spanContextToToken(otTrace.getSpanContext(this.rootContext));
   }
   get tenantId(): string {
     return this._tenantId;
