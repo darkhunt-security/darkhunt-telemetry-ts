@@ -87,10 +87,20 @@ npm install @darkhunt-security/telemetry
 
 **Where the package lives.** It's the scoped package `@darkhunt-security/telemetry`,
 published to **GitHub Packages** — browse published versions / builds at
-<https://github.com/darkhunt-security/darkhunt-telemetry-ts/pkgs/npm/telemetry>. It also
-resolves from the default public npm registry (`npm install` above works with no
-`.npmrc` scope config — verified). If a consumer is pinned to GitHub Packages instead,
-they'll have a `@darkhunt-security:registry=https://npm.pkg.github.com` line in `.npmrc`.
+<https://github.com/darkhunt-security/darkhunt-telemetry-ts/pkgs/npm/telemetry>. On a dev
+box it usually installs with no extra config because the user already has a
+`@darkhunt-security:registry=https://npm.pkg.github.com` scope line (+ a token) in `~/.npmrc`.
+
+> **⚠️ Do NOT assume the public npm registry has your pinned build.** GitHub Packages is the
+> source of truth; the public-npm mirror can lag by many builds (seen live: public maxed at
+> `0.5.2` while GitHub had `0.5.5-build.131`). So any environment WITHOUT the GitHub-Packages
+> scope+token — most CI, and **every container `npm install`** — fails with `ETARGET: No
+matching version found` on the exact version you pinned. Treat GitHub Packages auth as
+> **required, not optional** (see "Containerized / CI builds" below). Also: `npm view
+--registry=https://registry.npmjs.org …` **lies** here — the `@darkhunt-security:registry`
+> scope line in `~/.npmrc` overrides `--registry`, so it silently queries GitHub. To see what
+> public npm actually has, hit it directly:
+> `curl https://registry.npmjs.org/@darkhunt-security%2Ftelemetry`.
 
 **Don't hardcode a version from this doc — look up the current one.** Builds ship
 continuously (the `-build.N` suffix is the CI run), so any number written here goes stale.
@@ -104,6 +114,38 @@ npm view @darkhunt-security/telemetry version   # → current published build to
 Then pin exactly that in `package.json`, e.g. `"@darkhunt-security/telemetry":
 "^<version-from-above>"`. Match whatever version the user's organisation publishes through
 CI.
+
+**Containerized / CI builds — give the build GitHub Packages auth (as a secret).** A
+`Dockerfile` that copies `package.json` and runs a bare `npm install` has no `~/.npmrc`, so it
+hits public npm and fails `ETARGET` on a GitHub-only build (the failure that stops a container
+image cold). Provide the token as a **BuildKit build secret** so it's used only during install
+and never baked into a layer — never `ENV`/`ARG` a token:
+
+```dockerfile
+# syntax=docker/dockerfile:1
+COPY package.json package-lock.json ./
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
+    npm install --no-audit --no-fund
+```
+
+```yaml
+# docker-compose.yml — one secret, reused across the shared build
+services:
+  app:
+    build: { context: ., secrets: [npmrc] }
+secrets:
+  npmrc: { file: ${NPMRC_FILE:-${HOME}/.npmrc} }   # reuse the dev's GitHub-Packages ~/.npmrc
+```
+
+Two more container gotchas that cost real time:
+
+- **Use `npm install`, not `npm ci`, in the image.** A host-generated lockfile (e.g. npm 11)
+  can trip the container's older npm (`node:22-slim` ships npm 10) on a platform-conditional
+  **optional** dep — `EUSAGE: Missing <pkg>@x from lock file`, which aborts the build.
+  `npm install` reconciles it; `npm ci` refuses. (Or pin the same npm in the image.)
+- **Always reinstall inside the image.** The SDK is ESM and sits next to native deps; a host
+  `node_modules` (darwin/arm64) won't run on linux. `.dockerignore` your host `node_modules`
+  and let the image build its own.
 
 ### 2. Get an API key
 
@@ -924,17 +966,15 @@ strings yourself, use the official helpers:
   message(s) first** — you need the token before you open the nested trace. Fan-in = an array of
   tokens. The queue itself is invisible to the graph (only `publish`/`consume` tool spans); edges stay
   agent→agent.
-- **Temporal** — the token belongs in a **Temporal Header**, not the workflow args (your business
-  inputs). The SDK ships the interceptors: register `handoffWorkflowInterceptors` (from the sandbox-safe
-  `@darkhunt-security/telemetry/temporal/workflow` subpath) as a `workflowModules` entry and
-  `handoffActivityInterceptors()` on the activity side; the activity reads its upstream token via
-  `currentHandoff()` and passes it as `handoffFrom` to `client.trace(...)`. For a deliberate agent→agent
-  edge that differs from the call graph (link to the real producer; self-loops vs back-edges — see below),
-  the coordinator authors a **per-edge override** with `childArgs(input, [chosenToken])` on the
-  `executeChild` call — the workflow interceptor relocates it into the header and strips it from the
-  child's args. And **never instrument workflow code** (deterministic sandbox — no network/timers, so no
-  SDK): telemetry lives in activities + the gateway; an activity retry re-runs its LLM+tool loop and
-  re-emits spans.
+- **Temporal** — the token belongs in a **Temporal Header**, not the workflow args. Register
+  `handoffWorkflowInterceptors` (from the sandbox-safe `@darkhunt-security/telemetry/temporal/workflow`
+  subpath) as a `workflowModules` entry and `handoffActivityInterceptors()` on the activity side; each
+  activity reads its upstream via `currentHandoff()` → `client.trace({ handoffFrom })`. **Never instrument
+  workflow code** (deterministic sandbox — no SDK): telemetry lives in activities + the gateway; an
+  activity retry re-runs its LLM+tool loop and re-emits spans. **⚠️ But the interceptor defaults nest every
+  child under the orchestrator's token — a coordinator STAR, not the causal DAG — and fixing that requires
+  each child to RETURN its token. This is the #1 Temporal trap; read "Temporal: RETURN the token to build
+  the DAG" below BEFORE you write the `executeChild` calls.**
 - **In-process graph** (LangGraph, etc.) — there's no wire header in-process, so the token rides in
   the graph **state** (or ambient OTel context). Still give each node **its own `service.name`
   client** (`agentClient('domain.node')`) and thread the token node→node (a node writes its
@@ -945,6 +985,82 @@ strings yourself, use the official helpers:
   `handoffWorkflowInterceptors`/`handoffActivityInterceptors`, the HTTP `traceparent` header via
   `handoffToHttpHeaders`/`handoffFromHttpHeaders`, and a dedicated Redis-stream field via
   `handoffToMessageMeta`/`handoffsFromMessages` — so the token never rides in the business payload.)
+
+### ⚠️ Temporal: RETURN the token to build the DAG (defaults give a coordinator star)
+
+This is the single easiest thing to get wrong in a Temporal integration, and the failure is **silent** —
+everything ingests fine, per-agent model/cost/tools all look right, but the Topology renders as a **star**
+(every agent hanging off the gateway/coordinator) instead of the real pipeline (`recon → analyzer ⇄ planner
+→ taint → sandbox → triage → remediation → report`).
+
+**Why the star happens.** The workflow interceptor, by default, forwards the orchestrator's _inbound_
+handoff token to **every** `executeChild` and **every** activity. So with no per-edge work, all agents nest
+under the same upstream — that's the **call graph**, and a fan-out orchestrator's call graph _is_ a star.
+It is almost never the topology you want.
+
+**Why `childArgs` alone doesn't save you.** `childArgs(input, [upstreamToken])` overrides one edge — but
+you need `upstreamToken`, and **a workflow can neither mint nor read one**: workflows are sandboxed (no SDK,
+no telemetry), so only an **activity** produces a token (`runAgent` / `trace.handoffToken()`). And a
+Temporal Header flows **parent→child only** — there is **no metadata channel from a child back to the
+coordinator**. So a child's own token has exactly one way home: the **activity's return value**.
+
+**The recipe (the Temporal-specific exception to "keep tokens out of signatures").** Inbound, the token
+rides the header (out of the business args) — that rule still holds. The token a coordinator forwards
+_downstream_ is **returned** as an optional `handoff?: string` telemetry field on the activity result; the
+child workflow passes it through untouched, and the coordinator threads it into the NEXT `executeChild`:
+
+```ts
+// 1) ACTIVITY mints + returns its token (add an optional `handoff?: string` to the result type)
+export async function runRecon(input): Promise<Plan> {
+  const { result, handoff } = await runAgent('sec.recon',
+    { app, sessionId: input.taskId, userId: input.userId, handoffFrom: currentHandoff() }, reconImpl);
+  return { ...result, handoff };
+}
+// (the child workflow returns the activity result unchanged — `handoff` rides along)
+
+// 2) COORDINATOR workflow threads the REAL upstream per edge
+const edge = <T extends object>(x: T, from: Array<string | undefined>): [T] =>
+  childArgs(x, from.filter((t): t is string => Boolean(t)));      // drops undefined; [] → plain propagation
+
+const plan  = await executeChild(reconWf,   { ..., args: edge(reconInput,   [coordHandoff]) });     // coordinator → recon
+const anals = await Promise.all(steps.map(s =>
+              executeChild(analyzerWf, { ..., args: edge(aInput(s), [upstream]) })));                // recon → analyzer (round 1)
+const aTok  = anals.map(a => a.handoff);                                                             // collect this round's tokens
+const taint = await executeChild(taintWf,   { ..., args: edge(taintInput,   aTok) });                // analyzer → taint  (fan-in = array)
+const next  = await executeChild(plannerWf, { ..., args: edge(plannerInput, aTok) });                // analyzer → planner (fan-in)
+//   next round's analyzers use edge(aInput, [next.handoff])   →   the analyzer ⇄ planner ReAct LOOP
+const triage = await executeChild(triageWf, { ..., args: edge(triageInput, [taint.handoff, sbx.handoff]) }); // fan-in → linear spine
+```
+
+Rules of thumb: **fan-in** = pass the array of all upstream tokens; a **loop** = later rounds thread the
+downstream stage's token instead of the original (the planner's token, not recon's); a **hub** (e.g. a
+guardrail gate fired N times) = keep it on `[coordHandoff]`. Without the returned tokens you literally
+cannot draw the DAG — you get the star, and it's wrong.
+
+**The gateway→coordinator edge is the one exception that needs no return.** The SDK ships workflow +
+activity interceptors but **no client interceptor**, so the top-level `client.workflow.start(...)` carries
+no header on its own → the whole scan floats free of the gateway. Hand-roll a tiny `WorkflowClientInterceptor`
+that injects the gateway token (captured from the gateway's open trace via an ambient store):
+
+```ts
+import { defaultPayloadConverter } from '@temporalio/common';
+import { HANDOFF_HEADER } from '@darkhunt-security/telemetry/temporal/workflow';
+const gatewayHandoff: WorkflowClientInterceptor = {
+  async start(input, next) {
+    const token = currentGatewayToken(); // ambient token from the gateway's dh.trace()
+    return token
+      ? next({
+          ...input,
+          headers: {
+            ...input.headers,
+            [HANDOFF_HEADER]: defaultPayloadConverter.toPayload([token]),
+          },
+        })
+      : next(input);
+  },
+};
+new Client({ connection, namespace, interceptors: { workflow: [gatewayHandoff] } });
+```
 
 ### The orchestrator/gateway node — hand off from its root
 
