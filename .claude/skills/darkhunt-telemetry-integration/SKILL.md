@@ -268,6 +268,14 @@ darkhunt-cli enroll --api-key dh-...          # → ~/.darkhunt/credentials.json
 claude mcp add darkhunt -- darkhunt-cli mcp
 ```
 
+> **Gotcha: the MCP server reads the API key ONCE at startup — re-enrolling a NEW environment while it's
+> running keeps the STALE key.** If you `darkhunt-cli enroll` a different tenant/host (e.g. repointing
+> dev → prod) mid-session, `darkhunt_status` may re-read the file and _look_ correct, but the actual API
+> calls still send the old key → `403 TENANT_FORBIDDEN` (the old key isn't authorized for the new tenant).
+> The tell: a fresh CLI call (`darkhunt-cli datasets list`) succeeds against the new env while the MCP tool
+> 403s. Fix: **reconnect/restart the darkhunt MCP server** (`/mcp` → reconnect, or restart the session) so
+> it reloads `~/.darkhunt/credentials.json`. Retrying the MCP tool without reloading will not help.
+
 Once the `darkhunt_*` tools are available (auth reused from enroll):
 
 ```text
@@ -468,6 +476,13 @@ maybeUndefined }` fails to typecheck — build the object and add the optional
 - **`noPropertyAccessFromIndexSignature` forbids dotted access on `process.env`.**
   Read env vars with bracket syntax: `process.env['NODE_ENV']`, not
   `process.env.NODE_ENV`.
+
+- **A project's own message interface won't assign to the SDK's `ChatMessage`
+  without a cast.** `ChatMessage` is `{ role: string; content: string; [k: string]: unknown }`
+  (an index signature); a plain host interface like `{ role: 'user'|'assistant'; content: string; tool_calls?: ... }`
+  is structurally compatible but TS still rejects `ChatMsg[] → ChatMessage[]` ("index signature
+  missing"). Cast at the boundary — `inputMessages: msgs as unknown as ChatMessage[]` — inside your
+  `traceChat`/`traceGen` helper so call sites stay clean.
 
 ## Routing fields
 
@@ -921,6 +936,39 @@ store) _on entry_ — it still never becomes a business field. The Temporal path
 this: an activity interceptor reads the Temporal Header into `currentHandoff()`, and the activity
 passes that to `client.trace({ handoffFrom })`.
 
+> **⚠️ The single-token ambient carrier above only fits a LINEAR in-process chain. For an in-process
+> DAG, open the traces in the ORCHESTRATOR instead.** `withHandoff`/`publishHandoff` carry exactly one
+> "current" token and advance it by overwrite, which is perfect for `a → b → c` but **wrong** the moment
+> the flow branches: two agents running in `Promise.all` under DIFFERENT parents (a debate's bull-rebuttal
+> ← bear-thesis while bear-rebuttal ← bull-thesis), or a **fan-in** where one agent needs an ARRAY of
+> upstream tokens (`quant + bull + bear → PM`). A shared single-slot store can't express either. The clean
+> in-process pattern there is **orchestrator-driven**: the coordinator function opens each agent's trace
+> with an explicit `handoffFrom` it computes from the edges, and passes the `Trace` (or just its token)
+> into the agent for its generations/tools:
+>
+> ```ts
+> const tok = (t) => t?.handoffToken();
+> const root = openGatewayTrace('finance', input);
+> const coord = openAgentTrace({ agent: 'coordinator', handoffFrom: [tok(root)] });
+> await planTask(input, rt, coord); // agent takes a trailing `trace` param
+> const research = openAgentTrace({ agent: 'research', handoffFrom: [tok(coord)] });
+> await runResearch(args, rt, research);
+> // parallel-with-different-parents + fan-in are now trivial — each trace is explicit:
+> const bullTh = openAgentTrace({ agent: 'bull', handoffFrom: [tok(research)] });
+> const bearTh = openAgentTrace({ agent: 'bear', handoffFrom: [tok(research)] });
+> await Promise.all([runAnalyst(a, rt, bullTh), runAnalyst(b, rt, bearTh)]);
+> const pm = openAgentTrace({
+>   agent: 'pm',
+>   handoffFrom: [tok(quant), tok(bullRebut), tok(bearRebut)],
+> });
+> ```
+>
+> Yes, this puts a `trace` param on the agent function — the pragmatic, bounded exception to "keep tokens
+> out of signatures" (it's a clearly-typed telemetry param, defaulting to `null`, that no-ops when
+> disabled). It's the mirror of the Temporal RETURN-the-token recipe: a DAG needs per-edge control the
+> single ambient slot can't give. **Linear in-process → ambient carrier; branching/fan-in in-process →
+> orchestrator-driven traces.**
+
 ### Carrying the handoff token across each transport
 
 **The token is an opaque W3C `traceparent` STRING, and it belongs in the transport's METADATA /
@@ -1036,6 +1084,15 @@ Rules of thumb: **fan-in** = pass the array of all upstream tokens; a **loop** =
 downstream stage's token instead of the original (the planner's token, not recon's); a **hub** (e.g. a
 guardrail gate fired N times) = keep it on `[coordHandoff]`. Without the returned tokens you literally
 cannot draw the DAG — you get the star, and it's wrong.
+
+> **⚠️ A collection-returning activity can't carry a `handoff` field — WRAP it.** The recipe above does
+> `const aTok = anals.map(a => a.handoff)`, which silently assumes every child result is an **object**. But
+> a fan-out analyzer's business result is often an **array** (`Finding[]`), and you cannot attach `handoff?`
+> to an array — `findings.handoff` is `undefined`, so its downstream (taint/planner) falls back to the
+> parent chain and the fan-in edge never forms. Fix: change that activity + child workflow to return a
+> **wrapper** `{ findings: Finding[]; handoff?: string }`, then in the coordinator split them:
+> `const batch = await Promise.all(...); const findings = batch.flatMap(b => b.findings); const aTok = batch.map(b => b.handoff);`.
+> Same for any activity whose natural return is a bare array/primitive — the token needs an object to ride on.
 
 **The gateway→coordinator edge is the one exception that needs no return.** The SDK ships workflow +
 activity interceptors but **no client interceptor**, so the top-level `client.workflow.start(...)` carries
