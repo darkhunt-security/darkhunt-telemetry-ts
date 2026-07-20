@@ -24,7 +24,7 @@ These choices change everything downstream. Lock them before touching code.
 
 ### 1.1 Add `LICENSE` file
 
-Create `/LICENSE` containing the [Apache 2.0 full text](https://www.apache.org/licenses/LICENSE-2.0.txt). Header line: `Copyright 2026 Darkhunt Security, Inc.`
+Create `/LICENSE` containing the [Apache 2.0 full text](https://www.apache.org/licenses/LICENSE-2.0.txt). Header line: `Copyright 2026 Darkhunt Limited`
 
 ### 1.2 Add `NOTICE` file
 
@@ -32,7 +32,7 @@ Required by Apache 2.0 §4(d) when redistributing. Minimal contents:
 
 ```
 darkhunt-telemetry
-Copyright 2026 Darkhunt Security, Inc.
+Copyright 2026 Darkhunt Limited
 
 This product includes software developed by:
   - The OpenTelemetry Authors (Apache 2.0)
@@ -61,7 +61,7 @@ Currently:
 
 ```ts
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2026 Darkhunt Security, Inc.
+// Copyright 2026 Darkhunt Limited
 ```
 
 Add to all `src/**/*.ts` and `test/**/*.ts`. Optional but conventional for Apache projects.
@@ -80,7 +80,7 @@ Following the **Option A** path:
   ```yaml
   # data-masking-rules.yaml
   # SPDX-License-Identifier: Apache-2.0
-  # Copyright 2026 Darkhunt Security, Inc.
+  # Copyright 2026 Darkhunt Limited
   version: '2026.5.6'
   ```
 - [ ] Modify `scripts/publish-schema-npm.sh`:

@@ -3,7 +3,7 @@
   "name": "darkhunt",
   "description": "Darkhunt developer tools for Claude Code — skills for integrating Darkhunt LLM observability and security into your services.",
   "owner": {
-    "name": "Darkhunt Security, Inc.",
+    "name": "Darkhunt Limited",
     "email": "support@darkhunt.ai"
   },
   "plugins": [
@@ -13,7 +13,7 @@
       "source": "./plugins/darkhunt-telemetry",
       "category": "observability",
       "author": {
-        "name": "Darkhunt Security, Inc.",
+        "name": "Darkhunt Limited",
         "email": "support@darkhunt.ai"
       },
       "homepage": "https://github.com/darkhunt-security/darkhunt-telemetry-ts"

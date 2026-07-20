@@ -4,7 +4,7 @@
   "description": "TypeScript SDK for sending LLM traces, generations, and observations to the Darkhunt platform for persistence and security data enrichment. Built on OpenTelemetry primitives, with built-in client-side data masking.",
   "type": "module",
   "license": "Apache-2.0",
-  "author": "Darkhunt Security, Inc.",
+  "author": "Darkhunt Limited",
   "homepage": "https://github.com/darkhunt-security/darkhunt-telemetry-ts#readme",
   "bugs": {
     "url": "https://github.com/darkhunt-security/darkhunt-telemetry-ts/issues"
