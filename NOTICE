@@ -1,7 +1,7 @@
 darkhunt-telemetry
-Copyright 2026 Darkhunt Security, Inc.
+Copyright 2026 Darkhunt Limited
 
-This product includes software developed at Darkhunt Security, Inc.
+This product includes software developed at Darkhunt Limited
 (https://darkhunt.ai/).
 
 This product bundles or depends on the following third-party software:
@@ -14,6 +14,6 @@ This product bundles or depends on the following third-party software:
     (https://github.com/paulmillr/noble-hashes)
     Licensed under the MIT License.
 
-  * Darkhunt Security, Inc. — masking-schema (data-masking-rules.yaml + types)
+  * Darkhunt Limited — masking-schema (data-masking-rules.yaml + types)
     (https://github.com/darkhunt-security/api-contract)
     Licensed under the Apache License, Version 2.0.
