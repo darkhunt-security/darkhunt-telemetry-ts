@@ -141,7 +141,9 @@ Worked examples for each: [full SDK guide](https://docs.darkhunt.ai/darkhunt-ai-
 
 If you run **multiple agents that hand off to each other**, Darkhunt reconstructs the
 **agent topology** — a graph of who handed off to whom — plus per-agent cost, models,
-loops, and policy hits. Give **each agent its own `serviceName`** (that's the node identity).
+loops, and policy hits. Give **each agent its own `serviceName`** (that's the node identity),
+or, when several agents share one process, name them per trace with
+[`agent`](#several-agents-in-one-process).
 Two things build the graph: **nesting** (draws the edges) and **handoff tokens** (the data flow).
 
 ### 1. Nest each agent's trace under its caller — this is what draws the edges
@@ -234,6 +236,61 @@ const dispatch = root.span('dispatch', {
 const handoff = dispatch.handoffToken(); // → pass into the first agent's handoffFrom
 ```
 
+### Several agents in one process
+
+The node identity above is the OTel Resource `service.name`, which is fixed per
+`TracerProvider` — i.e. per client. So a process hosting several **logical** agents
+behind one shared client renders as a single node named after the process.
+
+When that's your shape, name the agent **per trace** instead. One client, one
+provider, one Resource:
+
+```ts
+export const dh = new DarkhuntTelemetry({ serviceName: 'alludium-web' });
+
+const research = dh.trace({
+  agent: 'research', // ← the topology node for this trace
+  name: 'research.run',
+  sessionId, // ← must be shared across the agents in one run (see below)
+  tenantId,
+  workspaceId,
+  applicationId,
+});
+
+const scoring = dh.trace({
+  agent: 'deal-scoring',
+  name: 'score.deal',
+  sessionId, // ← same session
+  handoffFrom: [research.handoffToken()],
+  tenantId,
+  workspaceId,
+  applicationId,
+});
+```
+
+`agent` emits `service.name` as a **span** attribute on the root and on every child
+span. The backend resolves a trace group's identity from merged attributes, where
+span attributes outrank the Resource — so each agent becomes its own node while
+`serviceName` stays the fallback for traces that don't set it.
+
+Two consequences worth knowing before you adopt it:
+
+> **An agent-scoped trace is always a new root.** Identity is resolved once per
+> trace id, so two agents sharing a trace would collapse onto whichever name merged
+> first. To make that impossible, passing `agent` ignores both `handoffFrom[0]` and
+> any ambient active span when parenting. `handoffFrom` still records every upstream
+> as an `agent_handoff` **link**, and links are what the topology walks to draw the
+> edge — so the graph is unchanged; the cross-agent `parentSpanId` chain is what you
+> give up. (A trace then covers one agent's slice rather than the end-to-end request.)
+
+> **Share `sessionId` across the agents in one run.** With the parent chain gone,
+> edges come from links alone, and links resolve **within a session**. Different
+> sessions, no edge.
+
+Use a small, stable set of values (`'research'`, `'deal-scoring'`) — never a request
+id or anything derived from user input. Each distinct value is a permanent topology
+node.
+
 ### What the graph shows — and how each shows up
 
 | You'll see…                               | …when                                                                                                                                                      |
@@ -297,6 +354,10 @@ Every option resolves as **constructor argument > env var > default**. The most 
 > records it per span so you can distinguish, group, and filter by service.
 > Since the Resource is per-`TracerProvider` (i.e. per client/process), distinct
 > names require distinct processes/clients, not a single shared instance.
+>
+> **Several agents in one process?** Use [`agent`](#several-agents-in-one-process)
+> on the trace instead — it names the topology node per trace, so one shared
+> client can still surface each logical agent as its own node.
 
 Full table, all routing-field env vars, and per-option behavior: [docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript#configuration](https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript#configuration).
 

@@ -117,7 +117,9 @@ Set **`serviceName`** (option, or `DARKHUNT_SERVICE_NAME` / `OTEL_SERVICE_NAME`)
 Resource `service.name`. The backend records it per span, so in a multi-service / multi-agent
 system give **each process its own** value (e.g. `weather.coordinator`, `weather.geodata`) to tell
 producers apart — the Resource is per-`TracerProvider`, so distinct names require distinct
-clients/processes, not one shared instance.
+clients/processes, not one shared instance. **When several logical agents share ONE process,
+don't spin up a client each — set `agent` per trace instead** (see "Multi-agent topology"): it
+emits `service.name` as a span attribute, which outranks the Resource at ingest.
 
 For `tool`-type observations, set **`toolName`** (and optionally `toolCallId` / `toolArguments`) on
 the span — emitted as `gen_ai.tool.name` / `gen_ai.tool.call.id` / `gen_ai.tool.call.arguments`, the
@@ -315,6 +317,7 @@ Set on `client.trace({...})` or as constructor defaults on `new DarkhuntTelemetr
 | `tags`          | no       | `trace.tags`                       |
 | `release`       | no       | `trace.version` + `serviceVersion` |
 | `environment`   | no       | `environment.deployment`           |
+| `agent`         | no       | `environment.serviceName` — the **topology node**. Emits `service.name` as a span attr on the root AND every child, overriding the Resource for this trace group. Also makes the trace a new root: `handoffFrom[0]` becomes a link, not a parent. |
 
 ### Span-level fields (all spans)
 
@@ -360,6 +363,19 @@ proprietary format). Wire it with the handoff helper; without links you only get
 under the orchestrator, not the real DAG.
 
 **Identity:** one `serviceName` per agent (e.g. `finance.quant`) — that is the topology node.
+
+> **Several logical agents in ONE process?** `serviceName` is the OTel Resource, fixed per
+> `TracerProvider` (i.e. per client), so a shared client renders ONE node named after the
+> process. Don't reach for a client-per-agent registry — pass **`agent`** per trace instead:
+> `dh.trace({ agent: 'research', ... })`. It emits `service.name` as a *span* attribute on the
+> root and every child (span attrs outrank the Resource at ingest), so each agent gets its own
+> node from one client. **Two rules come with it:** (1) an agent-scoped trace is deliberately a
+> **new root** — it ignores `handoffFrom[0]` and any ambient span when parenting, because node
+> identity resolves once per trace id and two agents in one trace would silently collapse;
+> upstreams stay `agent_handoff` links, so the edge survives but the cross-agent `parentSpanId`
+> chain does not. (2) Since edges then come from links alone, and links resolve **within a
+> session**, every agent in one run MUST share a `sessionId` or no edge is drawn. Use a small
+> stable set of agent names — each distinct value is a permanent topology node.
 
 **Emit a handoff — two calls:**
 
