@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-trace agent identity (`agent`).** New `agent` option on `dh.trace({...})`
+  names the **topology node** for that trace, so a process hosting several logical
+  agents behind one shared client no longer collapses onto a single node. It emits
+  `service.name` as a **span** attribute on the root and every child span; the
+  backend resolves a trace group's identity from merged attributes, where span
+  attributes outrank the Resource, so `serviceName` remains the fallback for traces
+  that don't set `agent`. Behaviour is unchanged when it is unset.
+
+  Two behaviours to know: node identity is resolved once per trace id, so an
+  agent-scoped trace is deliberately started as a **new root** — it ignores both
+  `handoffFrom[0]` and any ambient active span when parenting, which makes "two
+  agents in one trace" unrepresentable rather than a rule to remember. Upstreams
+  stay `agent_handoff` links (what topology reconstruction resolves edges from), so
+  the graph is unchanged, but because edges then come from links alone — and links
+  resolve **within a session** — every agent in one run must share a `sessionId`.
+
 - **Configurable `service.name`.** New `serviceName` option (resolves
   `serviceName` > `DARKHUNT_SERVICE_NAME` > `OTEL_SERVICE_NAME` > library name)
   sets the OTel Resource `service.name`, which the backend records per span.

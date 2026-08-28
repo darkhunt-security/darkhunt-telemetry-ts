@@ -216,7 +216,9 @@ Set **`serviceName`** (option, or `DARKHUNT_SERVICE_NAME` / `OTEL_SERVICE_NAME`)
 Resource `service.name`. The backend records it per span, so in a multi-service / multi-agent
 system give **each process its own** value (e.g. `weather.coordinator`, `weather.geodata`) to tell
 producers apart — the Resource is per-`TracerProvider`, so distinct names require distinct
-clients/processes, not one shared instance.
+clients/processes, not one shared instance. **When several logical agents share ONE process,
+don't spin up a client each — set `agent` per trace instead** (see "Multi-agent topology"): it
+emits `service.name` as a span attribute, which outranks the Resource at ingest.
 
 For `tool`-type observations, set **`toolName`** (and optionally `toolCallId` / `toolArguments`) on
 the span — emitted as `gen_ai.tool.name` / `gen_ai.tool.call.id` / `gen_ai.tool.call.arguments`, the
@@ -513,6 +515,18 @@ dh.trace({
   workspaceId: req.wsId,
   applicationId: 'shared',
 });
+
+// Multi-tenant AND several logical agents in the process: BOTH per-trace.
+// They're independent — routing comes from the request, `agent` from whichever
+// agent is running. Only serviceName stays on the client.
+const dh = new DarkhuntTelemetry({ serviceName: 'alludium-web' });
+dh.trace({
+  agent: 'research', // the topology node
+  sessionId: req.sessionId, // MUST be shared across the run's agents
+  tenantId: req.tenantId,
+  workspaceId: req.wsId,
+  applicationId: req.appId,
+});
 ```
 
 `assessmentRunId` is **optional** and used internally by Darkhunt assessment
@@ -614,19 +628,20 @@ by backend) or a backend gap (read by backend, no SDK API yet — see
 
 Set on `client.trace({...})` or as constructor defaults on `new DarkhuntTelemetry({...})`.
 
-| SDK option        | Required | OTel attribute emitted             | trace-hub field                    |
-| ----------------- | -------- | ---------------------------------- | ---------------------------------- |
-| `tenantId`        | yes      | `darkhunt.tenant_id` + URL routing | tenant scope                       |
-| `workspaceId`     | yes      | `darkhunt.workspace_id` + header   | workspace scope                    |
-| `applicationId`   | yes      | `darkhunt.application_id` + header | application scope                  |
-| `name`            | no       | `darkhunt.trace.name`              | `trace.name`                       |
-| `sessionId`       | no       | `darkhunt.session.id`              | `trace.sessionId`                  |
-| `userId`          | no       | `darkhunt.user.id`                 | `trace.userId`                     |
-| `userEmail`       | no       | `darkhunt.user.email`              | `trace.userEmail`                  |
-| `tags`            | no       | `darkhunt.trace.tags` (CSV)        | `trace.tags`                       |
-| `release`         | no       | `darkhunt.release`                 | `trace.version` + `serviceVersion` |
-| `environment`     | no       | `darkhunt.environment`             | `environment.deployment`           |
-| `assessmentRunId` | no       | `darkhunt.assessment_run_id`       | `trace.assessmentRunId` (internal) |
+| SDK option        | Required | OTel attribute emitted                                           | trace-hub field                                                                                                                                                                                                                 |
+| ----------------- | -------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tenantId`        | yes      | `darkhunt.tenant_id` + URL routing                               | tenant scope                                                                                                                                                                                                                    |
+| `workspaceId`     | yes      | `darkhunt.workspace_id` + header                                 | workspace scope                                                                                                                                                                                                                 |
+| `applicationId`   | yes      | `darkhunt.application_id` + header                               | application scope                                                                                                                                                                                                               |
+| `name`            | no       | `darkhunt.trace.name`                                            | `trace.name`                                                                                                                                                                                                                    |
+| `sessionId`       | no       | `darkhunt.session.id`                                            | `trace.sessionId`                                                                                                                                                                                                               |
+| `userId`          | no       | `darkhunt.user.id`                                               | `trace.userId`                                                                                                                                                                                                                  |
+| `userEmail`       | no       | `darkhunt.user.email`                                            | `trace.userEmail`                                                                                                                                                                                                               |
+| `tags`            | no       | `darkhunt.trace.tags` (CSV)                                      | `trace.tags`                                                                                                                                                                                                                    |
+| `release`         | no       | `darkhunt.release`                                               | `trace.version` + `serviceVersion`                                                                                                                                                                                              |
+| `environment`     | no       | `darkhunt.environment`                                           | `environment.deployment`                                                                                                                                                                                                        |
+| `assessmentRunId` | no       | `darkhunt.assessment_run_id`                                     | `trace.assessmentRunId` (internal)                                                                                                                                                                                              |
+| `agent`           | no       | `service.name` (**span** attr, on the root AND every child span) | `environment.serviceName` — the **topology node**. Overrides the Resource for this trace group (span attrs outrank the Resource at ingest). Also makes the trace a **new root**: `handoffFrom[0]` becomes a link, not a parent. |
 
 OTel resource attributes auto-set by the SDK (read by trace-hub as
 `environment.serviceName` / `environment.serviceVersion`):
@@ -790,6 +805,19 @@ scripts haven't run yet. (These are all still **one application** — the split 
 When the service is one agent in a **multi-agent system**, the platform reconstructs the
 **agent topology** — who handed off to whom. **Identity:** one `serviceName` per agent (e.g.
 `finance.quant`) — that is the topology node.
+
+> **Several logical agents in ONE process?** `serviceName` is the OTel Resource, fixed per
+> `TracerProvider` (i.e. per client), so a shared client renders ONE node named after the
+> process. Don't reach for a client-per-agent registry — pass **`agent`** per trace instead:
+> `dh.trace({ agent: 'research', ... })`. It emits `service.name` as a _span_ attribute on the
+> root and every child (span attrs outrank the Resource at ingest), so each agent gets its own
+> node from one client. **Two rules come with it:** (1) an agent-scoped trace is deliberately a
+> **new root** — it ignores `handoffFrom[0]` and any ambient span when parenting, because node
+> identity resolves once per trace id and two agents in one trace would silently collapse;
+> upstreams stay `agent_handoff` links, so the edge survives but the cross-agent `parentSpanId`
+> chain does not. (2) Since edges then come from links alone, and links resolve **within a
+> session**, every agent in one run MUST share a `sessionId` or no edge is drawn. Use a small
+> stable set of agent names — each distinct value is a permanent topology node.
 
 ### How much do you actually need? (least → most divergence from vanilla OTel)
 
@@ -1024,10 +1052,12 @@ strings yourself, use the official helpers:
   each child to RETURN its token. This is the #1 Temporal trap; read "Temporal: RETURN the token to build
   the DAG" below BEFORE you write the `executeChild` calls.**
 - **In-process graph** (LangGraph, etc.) — there's no wire header in-process, so the token rides in
-  the graph **state** (or ambient OTel context). Still give each node **its own `service.name`
-  client** (`agentClient('domain.node')`) and thread the token node→node (a node writes its
-  `handoffToken()` into state; the next reads it as `handoffFrom`), or the nodes collapse into one
-  undifferentiated blob.
+  the graph **state** (or ambient OTel context). Still give each node **its own identity**, or the
+  nodes collapse into one undifferentiated blob — and since a graph runs in ONE process, that means
+  **`dh.trace({ agent: 'domain.node' })` per node**, NOT a client per node. Thread the token
+  node→node as well (a node writes its `handoffToken()` into state; the next reads it as
+  `handoffFrom`) — with `agent` set the token is a LINK rather than a parent, which is what the
+  topology resolves the edge from. All nodes in one run must share a `sessionId`.
 
   (The reference demo now uses these SDK helpers on every transport — the Temporal Header via
   `handoffWorkflowInterceptors`/`handoffActivityInterceptors`, the HTTP `traceparent` header via

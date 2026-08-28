@@ -93,6 +93,37 @@ export interface TraceArgs {
   release?: string;
   environment?: string;
   /**
+   * Logical agent this trace belongs to — the **topology node identity**, for a
+   * process that hosts several agents behind one client.
+   *
+   * Normally node identity is the OTel Resource `service.name`, which is fixed per
+   * `TracerProvider` (i.e. per {@link DarkhuntTelemetry} instance), so one shared
+   * client renders one node. Setting `agent` emits `service.name` as a **span**
+   * attribute on the root and on every child span instead; the backend resolves a
+   * trace group's identity from merged attributes where span attributes outrank the
+   * Resource, so each agent surfaces as its own node. The client's `serviceName`
+   * stays as the fallback for traces that do not set this.
+   *
+   * **This trace becomes a new root.** Identity is resolved once per trace id, so two
+   * agents sharing a trace would collapse onto whichever name is merged first. To make
+   * that unrepresentable, passing `agent` starts a fresh trace: the root is parented
+   * under no one, ignoring both {@link TraceArgs.handoffFrom}[0] and any ambient active
+   * span. `handoffFrom` still records every upstream as an `agent_handoff` **link**, and
+   * links are what the topology walks to draw the edge — so the graph is unchanged, the
+   * `parentSpanId` chain between agents is not.
+   *
+   * Because edges are then resolved from links alone, and links resolve **within a
+   * session**, every agent in one logical run must share the same
+   * {@link TraceArgs.sessionId}, or the handoff edge cannot be drawn.
+   *
+   * Use a small, stable set of values (`'research'`, `'deal-scoring'`) — never a
+   * request id or anything derived from user input. Each distinct value is a permanent
+   * node in the topology. Sent verbatim, like the other identifiers: not masked.
+   *
+   * Leave unset for a single-agent process and configure `serviceName` on the client.
+   */
+  agent?: string;
+  /**
    * OTel span links on the trace **root span** — the upstream agents that handed
    * off to this one (multi-agent DAG). Pass each upstream span's `.context`, or a
    * remote context extracted from its `traceparent`. Supports fan-in.
@@ -169,6 +200,7 @@ export class Trace extends ActiveChildHost {
   private _metadata?: Metadata;
   private _release?: string;
   private _environment?: string;
+  private _agent?: string;
   private _observationType: ObservationType;
   private _input?: unknown;
   private _output?: unknown;
@@ -192,6 +224,7 @@ export class Trace extends ActiveChildHost {
     this._metadata = args.metadata;
     this._release = args.release;
     this._environment = args.environment;
+    this._agent = args.agent;
     this._observationType = args.observationType ?? 'agent';
     this._input = args.input;
     this._output = args.output;
@@ -211,7 +244,18 @@ export class Trace extends ActiveChildHost {
     // handoffFrom[0] wins over any ambient active span — it's the explicit causal
     // edge. When handoffFrom is empty/unresolvable, the root falls back to the
     // active context (behavior unchanged).
-    const parentContext = handoffContexts[0] ?? otContext.active();
+    //
+    // EXCEPT when `agent` is set. Node identity is resolved once per trace id, from
+    // that group's merged attributes, so two agents sharing a trace collapse onto
+    // whichever `service.name` merges first — silently, and dependent on span order.
+    // Rather than document "don't nest agents", make it unrepresentable: an
+    // agent-scoped trace is always a fresh root, ignoring handoffFrom[0] AND any
+    // ambient span (a shared HTTP/server span would otherwise merge every agent
+    // running beneath it). Upstreams stay `agent_handoff` LINKS above — which is what
+    // topology reconstruction resolves edges from — so only the cross-agent
+    // parentSpanId chain is given up, not the edge.
+    const parentContext =
+      this._agent !== undefined ? ROOT_CONTEXT : (handoffContexts[0] ?? otContext.active());
     this.rootSpan = tracer.startSpan(
       this.maskName(args.name ?? 'trace'),
       Object.keys(rootOptions).length > 0 ? rootOptions : undefined,
@@ -267,6 +311,10 @@ export class Trace extends ActiveChildHost {
   }
   get userEmail(): string | undefined {
     return this._userEmail;
+  }
+  /** Logical agent owning this trace — the topology node identity. See {@link TraceArgs.agent}. */
+  get agent(): string | undefined {
+    return this._agent;
   }
   /** Shared sanitizer applied at the Span choke points; undefined when masking is disabled. */
   get sanitizer(): Sanitizer | undefined {
@@ -339,6 +387,8 @@ export class Trace extends ActiveChildHost {
 
   private applyTraceAttrs(span: OtelSpan): void {
     span.setAttribute(ATTR.OBSERVATION_TYPE, this._observationType);
+    // Overrides the Resource `service.name` for this trace group — see TraceArgs.agent.
+    if (this._agent) span.setAttribute(ATTR.SERVICE_NAME, this._agent);
     span.setAttribute(ATTR.TENANT_ID, this._tenantId);
     span.setAttribute(ATTR.WORKSPACE_ID, this._workspaceId);
     span.setAttribute(ATTR.APPLICATION_ID, this._applicationId);

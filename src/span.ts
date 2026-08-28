@@ -477,6 +477,10 @@ export class Span extends ActiveChildHost {
 
   private applyTraceAttrs(): void {
     const t = this.traceRef;
+    // Must be on EVERY span, not just the trace root: the backend resolves node
+    // identity per span attribute set, so a root-only value would move the root to
+    // the agent's node and strand its whole subtree on the Resource's node.
+    if (t.agent) this.otelSpan.setAttribute(ATTR.SERVICE_NAME, t.agent);
     this.otelSpan.setAttribute(ATTR.TENANT_ID, t.tenantId);
     this.otelSpan.setAttribute(ATTR.WORKSPACE_ID, t.workspaceId);
     this.otelSpan.setAttribute(ATTR.APPLICATION_ID, t.applicationId);
