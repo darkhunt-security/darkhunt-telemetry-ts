@@ -112,12 +112,37 @@ jobs:
           echo "::notice title=Build Version::${{ steps.version.outputs.version }}"
           echo "VERSION=${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
 
+      # Built with jq into a file rather than interpolated into the action's inline
+      # YAML `payload`. A merge commit's message is multi-line, and the blank line
+      # between its subject and body is not legal continuation inside a quoted YAML
+      # scalar — so the payload silently failed to parse and 0.5.5-build.163 shipped
+      # unannounced. Values arrive via env (never `${{ }}` inside the script) and jq
+      # does the escaping, so a quote or newline in a commit message is just data.
+      - name: Compose Slack payload
+        env:
+          REPO: ${{ github.event.repository.name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT_URL: ${{ github.event.head_commit.url }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          jq -n \
+            --arg repo "$REPO" \
+            --arg version "$VERSION" \
+            --arg url "$COMMIT_URL" \
+            --arg subject "${COMMIT_MSG%%$'\n'*}" \
+            --arg actor "$ACTOR" \
+            '{text: "*\($repo)* released `\($version)`\n• Commit: <\($url)|\($subject)>\n• Published by: \($actor)"}' \
+            > "$RUNNER_TEMP/slack-payload.json"
+
       - name: Notify Slack
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_RELEASES }}
           webhook-type: incoming-webhook
-          payload: |
-            text: "*${{ github.event.repository.name }}* released `${{ steps.version.outputs.version }}`\n
-            • Commit: <${{ github.event.head_commit.url }}|${{ github.event.head_commit.message }}>\n
-            • Published by: ${{ github.actor }}"
+          # Defaults to "false", which is how the parse failure above went unnoticed:
+          # the step swallowed the error and reported success. A release that cannot
+          # announce itself should fail loudly — the publish has already happened by
+          # this point, so this cannot leave a half-published package.
+          errors: true
+          payload-file-path: ${{ runner.temp }}/slack-payload.json
