@@ -273,15 +273,12 @@ span. The backend resolves a trace group's identity from merged attributes, wher
 span attributes outrank the Resource — so each agent becomes its own node while
 `serviceName` stays the fallback for traces that don't set it.
 
-<<<<<<< HEAD
 This composes with [multi-tenant routing](#common-patterns): `agent` and the routing
 fields are independent, so a host serving many customers from one process passes
 **both** per trace — `tenantId` / `workspaceId` / `applicationId` from the request
 context, `agent` from whichever logical agent is running (exactly as above). Only
 `serviceName` stays on the client.
 
-=======
->>>>>>> 5bfe0a626242da865ee26ba7e24badb85860e4cb
 Two consequences worth knowing before you adopt it:
 
 > **An agent-scoped trace is always a new root.** Identity is resolved once per
