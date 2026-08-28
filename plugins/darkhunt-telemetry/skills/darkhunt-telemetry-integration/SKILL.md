@@ -317,18 +317,18 @@ The canonical list of what the SDK emits and what trace-hub reads.
 
 Set on `client.trace({...})` or as constructor defaults on `new DarkhuntTelemetry({...})`.
 
-| SDK option      | Required | trace-hub field                    |
-| --------------- | -------- | ---------------------------------- |
-| `tenantId`      | yes      | tenant scope                       |
-| `workspaceId`   | yes      | workspace scope                    |
-| `applicationId` | yes      | application scope                  |
-| `name`          | no       | `trace.name`                       |
-| `sessionId`     | no       | `trace.sessionId`                  |
-| `userId`        | no       | `trace.userId`                     |
-| `userEmail`     | no       | `trace.userEmail`                  |
-| `tags`          | no       | `trace.tags`                       |
-| `release`       | no       | `trace.version` + `serviceVersion` |
-| `environment`   | no       | `environment.deployment`           |
+| SDK option      | Required | trace-hub field                                                                                                                                                                                                                                   |
+| --------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tenantId`      | yes      | tenant scope                                                                                                                                                                                                                                      |
+| `workspaceId`   | yes      | workspace scope                                                                                                                                                                                                                                   |
+| `applicationId` | yes      | application scope                                                                                                                                                                                                                                 |
+| `name`          | no       | `trace.name`                                                                                                                                                                                                                                      |
+| `sessionId`     | no       | `trace.sessionId`                                                                                                                                                                                                                                 |
+| `userId`        | no       | `trace.userId`                                                                                                                                                                                                                                    |
+| `userEmail`     | no       | `trace.userEmail`                                                                                                                                                                                                                                 |
+| `tags`          | no       | `trace.tags`                                                                                                                                                                                                                                      |
+| `release`       | no       | `trace.version` + `serviceVersion`                                                                                                                                                                                                                |
+| `environment`   | no       | `environment.deployment`                                                                                                                                                                                                                          |
 | `agent`         | no       | `environment.serviceName` — the **topology node**. Emits `service.name` as a span attr on the root AND every child, overriding the Resource for this trace group. Also makes the trace a new root: `handoffFrom[0]` becomes a link, not a parent. |
 
 ### Span-level fields (all spans)
@@ -379,7 +379,7 @@ under the orchestrator, not the real DAG.
 > **Several logical agents in ONE process?** `serviceName` is the OTel Resource, fixed per
 > `TracerProvider` (i.e. per client), so a shared client renders ONE node named after the
 > process. Don't reach for a client-per-agent registry — pass **`agent`** per trace instead:
-> `dh.trace({ agent: 'research', ... })`. It emits `service.name` as a *span* attribute on the
+> `dh.trace({ agent: 'research', ... })`. It emits `service.name` as a _span_ attribute on the
 > root and every child (span attrs outrank the Resource at ingest), so each agent gets its own
 > node from one client. **Two rules come with it:** (1) an agent-scoped trace is deliberately a
 > **new root** — it ignores `handoffFrom[0]` and any ambient span when parenting, because node

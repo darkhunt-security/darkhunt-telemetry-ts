@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stay `agent_handoff` links (what topology reconstruction resolves edges from), so
   the graph is unchanged, but because edges then come from links alone — and links
   resolve **within a session** — every agent in one run must share a `sessionId`.
+
 - **Configurable `service.name`.** New `serviceName` option (resolves
   `serviceName` > `DARKHUNT_SERVICE_NAME` > `OTEL_SERVICE_NAME` > library name)
   sets the OTel Resource `service.name`, which the backend records per span.

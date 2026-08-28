@@ -628,19 +628,19 @@ by backend) or a backend gap (read by backend, no SDK API yet — see
 
 Set on `client.trace({...})` or as constructor defaults on `new DarkhuntTelemetry({...})`.
 
-| SDK option        | Required | OTel attribute emitted             | trace-hub field                    |
-| ----------------- | -------- | ---------------------------------- | ---------------------------------- |
-| `tenantId`        | yes      | `darkhunt.tenant_id` + URL routing | tenant scope                       |
-| `workspaceId`     | yes      | `darkhunt.workspace_id` + header   | workspace scope                    |
-| `applicationId`   | yes      | `darkhunt.application_id` + header | application scope                  |
-| `name`            | no       | `darkhunt.trace.name`              | `trace.name`                       |
-| `sessionId`       | no       | `darkhunt.session.id`              | `trace.sessionId`                  |
-| `userId`          | no       | `darkhunt.user.id`                 | `trace.userId`                     |
-| `userEmail`       | no       | `darkhunt.user.email`              | `trace.userEmail`                  |
-| `tags`            | no       | `darkhunt.trace.tags` (CSV)        | `trace.tags`                       |
-| `release`         | no       | `darkhunt.release`                 | `trace.version` + `serviceVersion` |
-| `environment`     | no       | `darkhunt.environment`             | `environment.deployment`           |
-| `assessmentRunId` | no       | `darkhunt.assessment_run_id`       | `trace.assessmentRunId` (internal) |
+| SDK option        | Required | OTel attribute emitted                                           | trace-hub field                                                                                                                                                                                                                 |
+| ----------------- | -------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tenantId`        | yes      | `darkhunt.tenant_id` + URL routing                               | tenant scope                                                                                                                                                                                                                    |
+| `workspaceId`     | yes      | `darkhunt.workspace_id` + header                                 | workspace scope                                                                                                                                                                                                                 |
+| `applicationId`   | yes      | `darkhunt.application_id` + header                               | application scope                                                                                                                                                                                                               |
+| `name`            | no       | `darkhunt.trace.name`                                            | `trace.name`                                                                                                                                                                                                                    |
+| `sessionId`       | no       | `darkhunt.session.id`                                            | `trace.sessionId`                                                                                                                                                                                                               |
+| `userId`          | no       | `darkhunt.user.id`                                               | `trace.userId`                                                                                                                                                                                                                  |
+| `userEmail`       | no       | `darkhunt.user.email`                                            | `trace.userEmail`                                                                                                                                                                                                               |
+| `tags`            | no       | `darkhunt.trace.tags` (CSV)                                      | `trace.tags`                                                                                                                                                                                                                    |
+| `release`         | no       | `darkhunt.release`                                               | `trace.version` + `serviceVersion`                                                                                                                                                                                              |
+| `environment`     | no       | `darkhunt.environment`                                           | `environment.deployment`                                                                                                                                                                                                        |
+| `assessmentRunId` | no       | `darkhunt.assessment_run_id`                                     | `trace.assessmentRunId` (internal)                                                                                                                                                                                              |
 | `agent`           | no       | `service.name` (**span** attr, on the root AND every child span) | `environment.serviceName` — the **topology node**. Overrides the Resource for this trace group (span attrs outrank the Resource at ingest). Also makes the trace a **new root**: `handoffFrom[0]` becomes a link, not a parent. |
 
 OTel resource attributes auto-set by the SDK (read by trace-hub as
@@ -809,7 +809,7 @@ When the service is one agent in a **multi-agent system**, the platform reconstr
 > **Several logical agents in ONE process?** `serviceName` is the OTel Resource, fixed per
 > `TracerProvider` (i.e. per client), so a shared client renders ONE node named after the
 > process. Don't reach for a client-per-agent registry — pass **`agent`** per trace instead:
-> `dh.trace({ agent: 'research', ... })`. It emits `service.name` as a *span* attribute on the
+> `dh.trace({ agent: 'research', ... })`. It emits `service.name` as a _span_ attribute on the
 > root and every child (span attrs outrank the Resource at ingest), so each agent gets its own
 > node from one client. **Two rules come with it:** (1) an agent-scoped trace is deliberately a
 > **new root** — it ignores `handoffFrom[0]` and any ambient span when parenting, because node
