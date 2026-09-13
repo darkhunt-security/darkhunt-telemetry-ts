@@ -4,7 +4,6 @@ import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 import pkg from '../package.json' with { type: 'json' };
 import { DarkhuntSpanExporter } from './exporter.js';
-import { Sanitizer, type CustomPattern } from './masking/index.js';
 import { registerOtelContextGlobals } from './otel-globals.js';
 import { Trace, type TraceArgs } from './trace.js';
 
@@ -38,23 +37,6 @@ function removeBeforeExitHandlerIfIdle(): void {
   beforeExitInstalled = false;
 }
 
-export interface MaskingOptions {
-  /**
-   * Enable client-side data masking on inputs, outputs, messages, system
-   * prompts, metadata values, and status messages before they leave this
-   * process. Defaults to true — turning it off is rarely the right call,
-   * but available for local dev with synthetic data.
-   */
-  enabled?: boolean;
-  /**
-   * Operator-defined extra rules merged after the bundled defaults. The
-   * defaults already cover common secrets (API keys, tokens) and PII
-   * (emails, IBANs, credit cards, etc.) — use this only for site-specific
-   * patterns like internal ticket IDs.
-   */
-  customPatterns?: readonly CustomPattern[];
-}
-
 export interface DarkhuntTelemetryOptions {
   baseUrl?: string;
   apiKey?: string;
@@ -80,8 +62,6 @@ export interface DarkhuntTelemetryOptions {
    * Defaults to `false`, or `DARKHUNT_INTERNAL=true` env if set.
    */
   internal?: boolean;
-  /** Client-side data masking. Enabled by default. */
-  mask?: MaskingOptions;
   /**
    * Register the global OTel context manager + W3C propagator so `context.with(...)`
    * nests spans (required for cross-service / multi-agent trace stitching). Enabled
@@ -118,7 +98,6 @@ export class DarkhuntTelemetry {
   private readonly _enabled: boolean;
   private readonly _release?: string;
   private readonly _environment?: string;
-  private readonly _sanitizer?: Sanitizer;
   private readonly _tenantId?: string;
   private readonly _workspaceId?: string;
   private readonly _applicationId?: string;
@@ -150,11 +129,6 @@ export class DarkhuntTelemetry {
         'DarkhuntTelemetry: apiKey is required for the public endpoint ' +
           '(pass via options, set DARKHUNT_API_KEY, or use internal: true)'
       );
-    }
-
-    const maskingEnabled = options.mask?.enabled ?? true;
-    if (this._enabled && maskingEnabled) {
-      this._sanitizer = new Sanitizer(undefined, options.mask?.customPatterns ?? []);
     }
 
     // `||` (not `??`) so an empty-string env var (a declared-but-unpopulated
@@ -212,7 +186,7 @@ export class DarkhuntTelemetry {
 
     const tracer =
       this._enabled && this.tracer ? this.tracer : otTrace.getTracer(LIB_NAME, LIB_VERSION);
-    return new Trace(tracer, merged, this._sanitizer);
+    return new Trace(tracer, merged);
   }
 
   async flush(): Promise<void> {

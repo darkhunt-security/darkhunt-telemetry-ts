@@ -1,7 +1,7 @@
 {
   "name": "@darkhunt-security/telemetry",
-  "version": "0.5.5",
-  "description": "TypeScript SDK for sending LLM traces, generations, and observations to the Darkhunt platform for persistence and security data enrichment. Built on OpenTelemetry primitives, with built-in client-side data masking.",
+  "version": "1.0.0",
+  "description": "TypeScript SDK for sending LLM traces, generations, and observations to the Darkhunt platform for persistence and security data enrichment. Built on OpenTelemetry primitives.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "Darkhunt Limited",
@@ -15,9 +15,7 @@
     "otlp",
     "llm",
     "observability",
-    "tracing",
-    "data-masking",
-    "pii"
+    "tracing"
   ],
   "engines": {
     "node": "^18.19.0 || >=20.6.0"
@@ -63,20 +61,17 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "prepare": "tsx scripts/generate-rules-json.ts && tsc",
-    "prebuild": "tsx scripts/generate-rules-json.ts",
+    "prepare": "tsc",
     "build": "tsc",
     "prepublishOnly": "npm run build",
-    "pretypecheck": "tsx scripts/generate-rules-json.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx scripts/generate-rules-json.ts && node --import tsx --test 'test/**/*.test.ts'",
-    "test:coverage": "tsx scripts/generate-rules-json.ts && c8 --reporter=lcov --reporter=text --include 'src/**/*.ts' --exclude 'src/**/*.d.ts' --exclude 'src/masking/rules/**' node --import tsx --test 'test/**/*.test.ts'",
+    "test": "node --import tsx --test 'test/**/*.test.ts'",
+    "test:coverage": "c8 --reporter=lcov --reporter=text --include 'src/**/*.ts' --exclude 'src/**/*.d.ts' node --import tsx --test 'test/**/*.test.ts'",
     "lint": "eslint",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "@noble/hashes": "^1.8.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/context-async-hooks": "^2.0.0",
     "@opentelemetry/core": "^2.0.0",
@@ -99,8 +94,7 @@
     "prettier": "^3.8.0",
     "tsx": "^4.19.0",
     "typescript": "^5.9.0",
-    "typescript-eslint": "^8.0.0",
-    "yaml": "^2.8.4"
+    "typescript-eslint": "^8.0.0"
   },
   "peerDependencies": {
     "@temporalio/common": ">=1.11.0 <2",

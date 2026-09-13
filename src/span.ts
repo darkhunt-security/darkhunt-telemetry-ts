@@ -14,7 +14,6 @@ import {
   type Tracer,
 } from '@opentelemetry/api';
 import { ATTR, GEN_AI } from './attributes.js';
-import type { Sanitizer } from './masking/index.js';
 import type { HandoffToken, Trace } from './trace.js';
 
 /**
@@ -35,31 +34,36 @@ export function spanContextToToken(sc: SpanContext | undefined): HandoffToken {
 import type { Cost, Metadata, ObservationLevel, ObservationType, Usage } from './types.js';
 
 /**
- * JSON.stringify wrapper that converts BigInt → string (the closest JSON has)
- * and returns a placeholder rather than throwing on circular refs or other
- * unserializable values — caller is a span-attribute setter on a hot path
- * and must not fail.
+ * JSON.stringify wrapper for span attribute values. Converts BigInt → string
+ * (the closest JSON has) and replaces a circular reference with `"[circular]"`
+ * so the rest of the value still serializes. Anything else that cannot be
+ * serialized yields a placeholder rather than throwing — the caller is a
+ * span-attribute setter on a hot path and must not fail.
  */
 export function safeJsonStringify(value: unknown): string {
+  // Objects on the path from the root to the value being serialized. A value
+  // already on the path is a cycle; a value merely seen elsewhere (a shared,
+  // non-circular reference) is serialized again, as JSON.stringify would.
+  const ancestors: unknown[] = [];
   try {
-    return JSON.stringify(value, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
+    return JSON.stringify(value, function (this: unknown, _k: string, v: unknown) {
+      if (typeof v === 'bigint') return v.toString();
+      if (typeof v !== 'object' || v === null) return v;
+      while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) ancestors.pop();
+      if (ancestors.includes(v)) return '[circular]';
+      ancestors.push(v);
+      return v;
+    });
   } catch (err) {
     diag.warn('darkhunt-telemetry: failed to JSON.stringify value', err);
     return `[unserializable: ${err instanceof Error ? err.message : String(err)}]`;
   }
 }
 
-export function applyMetadataAttrs(
-  span: OtelSpan,
-  metadata: Metadata,
-  sanitizer?: Sanitizer
-): void {
-  for (const [k, v] of Object.entries(metadata)) {
-    if (v === undefined || v === null) continue;
-    // Keys land in the OTel attribute name verbatim; mask them too.
-    const safeKey = sanitizer ? sanitizer.sanitize(k) : k;
-    const key = `${ATTR.METADATA_PREFIX}${safeKey}`;
-    const value = sanitizer ? sanitizer.sanitizeUnknown(v) : v;
+export function applyMetadataAttrs(span: OtelSpan, metadata: Metadata): void {
+  for (const [k, value] of Object.entries(metadata)) {
+    if (value === undefined || value === null) continue;
+    const key = `${ATTR.METADATA_PREFIX}${k}`;
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
       span.setAttribute(key, value);
     } else {
@@ -93,7 +97,7 @@ export interface SpanOptions {
   toolName?: string;
   /** Tool-call id (e.g. the provider's `tool_call.id`). Emitted as `gen_ai.tool.call.id`. */
   toolCallId?: string;
-  /** Tool-call arguments. Emitted (masked) as `gen_ai.tool.call.arguments`. */
+  /** Tool-call arguments. Emitted as `gen_ai.tool.call.arguments`. */
   toolArguments?: unknown;
   /**
    * Backdated span start. Use this when the span is opened *after* the work
@@ -325,9 +329,8 @@ export class Span extends ActiveChildHost {
     if (opts.startTime !== undefined) otelOptions.startTime = opts.startTime;
     const links = toOtelLinks(opts.links);
     if (links.length > 0) otelOptions.links = links;
-    // Span name lands on the wire verbatim — mask in case user-controlled.
     this.otelSpan = this.tracer.startSpan(
-      this.traceRef.maskName(args.name),
+      args.name,
       Object.keys(otelOptions).length > 0 ? otelOptions : undefined,
       parentCtx
     );
@@ -337,10 +340,10 @@ export class Span extends ActiveChildHost {
     this.applyTraceAttrs();
     if (opts.input !== undefined) this.setIo(ATTR.OBSERVATION_INPUT, opts.input);
     if (opts.output !== undefined) this.setIo(ATTR.OBSERVATION_OUTPUT, opts.output);
-    if (opts.metadata) applyMetadataAttrs(this.otelSpan, opts.metadata, this.traceRef.sanitizer);
+    if (opts.metadata) applyMetadataAttrs(this.otelSpan, opts.metadata);
     if (opts.level) this.otelSpan.setAttribute(ATTR.OBSERVATION_LEVEL, opts.level);
-    this.setMaskedStringAttr(ATTR.STATUS_MESSAGE, opts.statusMessage);
-    this.setMaskedStringAttr(ATTR.VERSION, opts.version);
+    this.setStringAttr(ATTR.STATUS_MESSAGE, opts.statusMessage);
+    this.setStringAttr(ATTR.VERSION, opts.version);
     this.setToolAttrs(opts);
   }
 
@@ -398,22 +401,18 @@ export class Span extends ActiveChildHost {
       diag.warn('darkhunt-telemetry: update() called on an already-ended span; ignored');
       return this;
     }
-    if (options.name !== undefined) this.otelSpan.updateName(this.traceRef.maskName(options.name));
+    if (options.name !== undefined) this.otelSpan.updateName(options.name);
     if (options.input !== undefined) this.setIo(ATTR.OBSERVATION_INPUT, options.input);
     if (options.output !== undefined) this.setIo(ATTR.OBSERVATION_OUTPUT, options.output);
-    this.setMaskedJsonAttr(GEN_AI.INPUT_MESSAGES, options.inputMessages);
-    this.setMaskedJsonAttr(GEN_AI.OUTPUT_MESSAGES, options.outputMessages);
+    this.setJsonAttr(GEN_AI.INPUT_MESSAGES, options.inputMessages);
+    this.setJsonAttr(GEN_AI.OUTPUT_MESSAGES, options.outputMessages);
     if (options.systemInstructions !== undefined) {
-      this.otelSpan.setAttribute(
-        GEN_AI.SYSTEM_INSTRUCTIONS,
-        this.maskString(options.systemInstructions)
-      );
+      this.otelSpan.setAttribute(GEN_AI.SYSTEM_INSTRUCTIONS, options.systemInstructions);
     }
-    if (options.metadata)
-      applyMetadataAttrs(this.otelSpan, options.metadata, this.traceRef.sanitizer);
+    if (options.metadata) applyMetadataAttrs(this.otelSpan, options.metadata);
     if (options.level) this.otelSpan.setAttribute(ATTR.OBSERVATION_LEVEL, options.level);
-    this.setMaskedStringAttr(ATTR.STATUS_MESSAGE, options.statusMessage);
-    this.setMaskedStringAttr(ATTR.VERSION, options.version);
+    this.setStringAttr(ATTR.STATUS_MESSAGE, options.statusMessage);
+    this.setStringAttr(ATTR.VERSION, options.version);
     this.setToolAttrs(options);
     return this;
   }
@@ -423,13 +422,13 @@ export class Span extends ActiveChildHost {
     this.ended = true;
 
     if (options.output !== undefined) this.setIo(ATTR.OBSERVATION_OUTPUT, options.output);
-    this.setMaskedJsonAttr(GEN_AI.OUTPUT_MESSAGES, options.outputMessages);
-    const maskedStatus = options.statusMessage ? this.maskString(options.statusMessage) : undefined;
-    if (maskedStatus !== undefined) this.otelSpan.setAttribute(ATTR.STATUS_MESSAGE, maskedStatus);
+    this.setJsonAttr(GEN_AI.OUTPUT_MESSAGES, options.outputMessages);
+    const statusMessage = options.statusMessage || undefined;
+    this.setStringAttr(ATTR.STATUS_MESSAGE, statusMessage);
     if (options.level) this.otelSpan.setAttribute(ATTR.OBSERVATION_LEVEL, options.level);
 
     if (options.level === 'ERROR') {
-      this.otelSpan.setStatus({ code: SpanStatusCode.ERROR, message: maskedStatus });
+      this.otelSpan.setStatus({ code: SpanStatusCode.ERROR, message: statusMessage });
     } else {
       this.otelSpan.setStatus({ code: SpanStatusCode.OK });
     }
@@ -439,21 +438,11 @@ export class Span extends ActiveChildHost {
 
   protected setIo(key: string, value: unknown): void {
     if (value === null || value === undefined) return;
-    const sanitizer = this.traceRef.sanitizer;
-    const sanitized = sanitizer ? sanitizer.sanitizeUnknown(value) : value;
-    if (typeof sanitized === 'string') {
-      this.otelSpan.setAttribute(key, sanitized);
-    } else {
-      this.otelSpan.setAttribute(key, safeJsonStringify(sanitized));
-    }
+    this.otelSpan.setAttribute(key, typeof value === 'string' ? value : safeJsonStringify(value));
   }
 
-  protected maskString(value: string): string {
-    return this.traceRef.sanitizer ? this.traceRef.sanitizer.sanitize(value) : value;
-  }
-
-  protected setMaskedStringAttr(key: string, value: string | undefined): void {
-    if (value) this.otelSpan.setAttribute(key, this.maskString(value));
+  protected setStringAttr(key: string, value: string | undefined): void {
+    if (value) this.otelSpan.setAttribute(key, value);
   }
 
   /** Emit `gen_ai.tool.*` attributes for tool observations (name/callId/arguments). */
@@ -462,17 +451,15 @@ export class Span extends ActiveChildHost {
     toolCallId?: string;
     toolArguments?: unknown;
   }): void {
-    this.setMaskedStringAttr(GEN_AI.TOOL_NAME, opts.toolName);
-    this.setMaskedStringAttr(GEN_AI.TOOL_CALL_ID, opts.toolCallId);
+    this.setStringAttr(GEN_AI.TOOL_NAME, opts.toolName);
+    this.setStringAttr(GEN_AI.TOOL_CALL_ID, opts.toolCallId);
     if (opts.toolArguments !== undefined)
       this.setIo(GEN_AI.TOOL_CALL_ARGUMENTS, opts.toolArguments);
   }
 
-  protected setMaskedJsonAttr(key: string, value: unknown): void {
+  protected setJsonAttr(key: string, value: unknown): void {
     if (value === undefined) return;
-    const sanitizer = this.traceRef.sanitizer;
-    const masked = sanitizer ? sanitizer.sanitizeUnknown(value) : value;
-    this.otelSpan.setAttribute(key, safeJsonStringify(masked));
+    this.otelSpan.setAttribute(key, safeJsonStringify(value));
   }
 
   private applyTraceAttrs(): void {
@@ -488,8 +475,7 @@ export class Span extends ActiveChildHost {
     if (t.sessionId) this.otelSpan.setAttribute(ATTR.SESSION_ID, t.sessionId);
     if (t.userId) this.otelSpan.setAttribute(ATTR.USER_ID, t.userId);
     if (t.userEmail) this.otelSpan.setAttribute(ATTR.USER_EMAIL, t.userEmail);
-    // t.name is the raw stored value — mask on every child span attribute.
-    if (t.name) this.otelSpan.setAttribute(ATTR.TRACE_NAME, t.maskName(t.name));
+    if (t.name) this.otelSpan.setAttribute(ATTR.TRACE_NAME, t.name);
   }
 }
 
@@ -539,9 +525,7 @@ export class Generation extends Span {
 
     const opts = args.options ?? {};
     if (opts.model) this.setModel(opts.model);
-    // Walk modelParameters: operators sometimes tuck provider keys or webhook
-    // URLs in here for custom backends.
-    this.setMaskedJsonAttr(ATTR.MODEL_PARAMETERS, opts.modelParameters);
+    this.setJsonAttr(ATTR.MODEL_PARAMETERS, opts.modelParameters);
     if (opts.usage) this.setUsage(opts.usage);
     if (opts.cost) this.setCost(opts.cost);
     if (opts.completionStartTime !== undefined) {
@@ -550,14 +534,14 @@ export class Generation extends Span {
         Math.floor(opts.completionStartTime * 1e9)
       );
     }
-    this.setMaskedStringAttr(ATTR.PROMPT_NAME, opts.promptName);
-    this.setMaskedStringAttr(ATTR.PROMPT_VERSION, opts.promptVersion);
+    this.setStringAttr(ATTR.PROMPT_NAME, opts.promptName);
+    this.setStringAttr(ATTR.PROMPT_VERSION, opts.promptVersion);
   }
 
   override update(options: GenerationUpdateOptions): this {
     super.update(options);
     if (options.model) this.setModel(options.model);
-    this.setMaskedJsonAttr(ATTR.MODEL_PARAMETERS, options.modelParameters);
+    this.setJsonAttr(ATTR.MODEL_PARAMETERS, options.modelParameters);
     if (options.usage) this.setUsage(options.usage);
     if (options.cost) this.setCost(options.cost);
     if (options.completionStartTime !== undefined) {
@@ -566,8 +550,8 @@ export class Generation extends Span {
         Math.floor(options.completionStartTime * 1e9)
       );
     }
-    this.setMaskedStringAttr(ATTR.PROMPT_NAME, options.promptName);
-    this.setMaskedStringAttr(ATTR.PROMPT_VERSION, options.promptVersion);
+    this.setStringAttr(ATTR.PROMPT_NAME, options.promptName);
+    this.setStringAttr(ATTR.PROMPT_VERSION, options.promptVersion);
     return this;
   }
 

@@ -43,9 +43,9 @@ jobs:
           fi
 
       # `npm pack --silent` only suppresses npm's own logs — lifecycle scripts
-      # (prepare → generate-rules-json.ts) still log their progress to stdout,
-      # which would otherwise contaminate the captured tarball name. Take the
-      # last line, which is always the produced .tgz filename.
+      # (prepare → tsc) can still write to stdout, which would otherwise
+      # contaminate the captured tarball name. Take the last line, which is
+      # always the produced .tgz filename.
       - id: pack
         run: |
           file=$(npm pack --silent | tail -n 1)

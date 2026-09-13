@@ -7,7 +7,7 @@
 [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=darkhunt-security_darkhunt-telemetry-ts&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=darkhunt-security_darkhunt-telemetry-ts)
 [![Known Vulnerabilities](https://snyk.io/test/github/darkhunt-security/darkhunt-telemetry-ts/badge.svg)](https://snyk.io/test/github/darkhunt-security/darkhunt-telemetry-ts)
 
-TypeScript SDK for sending LLM traces, generations, and observations to the [Darkhunt platform](https://app.darkhunt.ai) for persistence and security data enrichment. Built on OpenTelemetry primitives, with built-in client-side data masking that redacts secrets and PII before payloads leave the process.
+TypeScript SDK for sending LLM traces, generations, and observations to the [Darkhunt platform](https://app.darkhunt.ai) for persistence and security data enrichment. Built on OpenTelemetry primitives. The SDK sends values as you give them; masking of PII happens server-side in the Darkhunt platform on ingest.
 
 > 🤖 **Skip the manual wiring** — if you use Claude Code, install the Darkhunt plugin once:
 >
@@ -340,7 +340,6 @@ Every option resolves as **constructor argument > env var > default**. The most 
 | `enabled`         | `DARKHUNT_ENABLED`                            | `true`                              |
 | `flushAt`         | `DARKHUNT_FLUSH_AT`                           | `20` records                        |
 | `flushIntervalMs` | `DARKHUNT_FLUSH_INTERVAL`                     | `5s`                                |
-| `mask.enabled`    | —                                             | `true`                              |
 
 > **Setting `baseUrl` for a non-prod environment.** It must be the **ingest API
 > host**, not the dashboard, **and include the `/trace-hub` path** — the SDK posts
@@ -367,24 +366,13 @@ Every option resolves as **constructor argument > env var > default**. The most 
 
 Full table, all routing-field env vars, and per-option behavior: [docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript#configuration](https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript#configuration).
 
-## Data masking (default-on)
+## Data masking
 
-The SDK redacts secrets and PII _before_ data leaves your process — 66 rules covering AWS/OpenAI/Stripe/GitHub-shape API keys, JWTs, PEM blocks, emails, credit cards (Luhn-validated), IBANs (mod-97), crypto addresses (Base58Check / EIP-55), and more. Server-side masking runs again as defense-in-depth.
-
-```ts
-// Add site-specific patterns on top of the defaults:
-new DarkhuntTelemetry({
-  mask: {
-    customPatterns: [{ name: 'ticket', regex: 'PROJ-\\d+', marker: '[TICKET]' }],
-  },
-});
-```
-
-Full ruleset, validators, and the phone-number rationale: [docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript#data-masking](https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript#data-masking).
+The SDK does not mask data. Inputs, outputs, messages, names, tags, metadata and status messages are sent verbatim; masking of PII happens server-side in the Darkhunt platform on ingest.
 
 ## Documentation
 
-- **[Full SDK guide](https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript)** — configuration, lifecycle, API reference, 8 worked examples, architecture, masking ruleset
+- **[Full SDK guide](https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript)** — configuration, lifecycle, API reference, 8 worked examples, architecture
 - [Tracing dashboard](https://docs.darkhunt.ai/darkhunt-ai-security/tracing) — what the traces you ship look like in the Darkhunt UI
 
 ## Development

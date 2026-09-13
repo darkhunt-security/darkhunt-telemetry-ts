@@ -6,7 +6,7 @@ description: |
   into a Node.js / TypeScript service. Covers: install, singleton client setup,
   trace + generation + span emission, backdated `startTime`, graceful shutdown,
   routing-field discipline (tenantId / workspaceId / applicationId), in-cluster
-  vs public ingest paths, the masking layer, multi-agent topology + agent handoffs
+  vs public ingest paths, multi-agent topology + agent handoffs
   (`trace.handoffToken()` / `handoffFrom`, span links, worker-vs-agent, loops &
   cycles), and the canonical SDK-field-to-trace-hub mapping (what attributes the
   backend actually reads). Auto-invoke when the user asks about adding LLM tracing,
@@ -25,10 +25,10 @@ service. The reference integration is `attack-discovery` at
 below are extracted from there.
 
 The SDK source lives at `/Users/sergey/proj/darkhunt/darkhunt-telemetry-ts`
-and ships `README.md` with the complete API reference + masking docs. **Read
+and ships `README.md` with the complete API reference. **Read
 that README first** if the user is doing something the patterns below don't
 cover (RAG retriever spans, multi-turn chat sessions, streaming
-time-to-first-token, custom masking patterns).
+time-to-first-token).
 
 ## What the SDK is
 
@@ -37,8 +37,8 @@ Darkhunt-specific span exporter built on OpenTelemetry primitives
 — traces, LLM generations, tool calls, retrievals, guardrails — to Darkhunt
 trace-hub. Routing semantics (`tenantId` / `workspaceId` / `applicationId`)
 and the attribute schema are Darkhunt-specific; trace-hub is the only intended
-receiver. Built-in client-side data masking redacts 66 secret/PII patterns
-before payloads leave the process.
+receiver. The SDK does not mask data — values are sent verbatim, and masking
+of PII happens server-side in the Darkhunt platform on ingest.
 
 Key shapes:
 
@@ -657,10 +657,10 @@ Set on `trace.span(name, opts)` / `trace.generation(name, opts)` / via
 | SDK option        | OTel attribute emitted                | trace-hub field                  | Notes                                                                                                                                                                                   |
 | ----------------- | ------------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `observationType` | `darkhunt.observation.type`           | `span.type`                      | one of `span` / `tool` / `agent` / `generation` / `event` / `chain` / `retriever` / `evaluator` / `embedding` / `guardrail`                                                             |
-| `input`           | `darkhunt.observation.input`          | `content.input`                  | masked; objects walked recursively                                                                                                                                                      |
-| `output`          | `darkhunt.observation.output`         | `content.output`                 | masked                                                                                                                                                                                  |
+| `input`           | `darkhunt.observation.input`          | `content.input`                  | sent verbatim; objects JSON-encoded                                                                                                                                                     |
+| `output`          | `darkhunt.observation.output`         | `content.output`                 | sent verbatim                                                                                                                                                                           |
 | `level`           | `darkhunt.observation.level`          | `span.level`                     | SDK `ObservationLevel` = `'DEBUG'` / `'INFO'` / `'WARNING'` / `'ERROR'` (NOT `'DEFAULT'`). **Omit** `level` to get the backend's default; passing `'DEFAULT'` is not a valid SDK value. |
-| `statusMessage`   | OTel `setStatus({ message })`         | `error.message` (`_span_status`) | masked; sets ERROR status when paired with `level: 'ERROR'`                                                                                                                             |
+| `statusMessage`   | OTel `setStatus({ message })`         | `error.message` (`_span_status`) | sets ERROR status when paired with `level: 'ERROR'`                                                                                                                                     |
 | `version`         | `darkhunt.version`                    | `span.version`                   |                                                                                                                                                                                         |
 | `metadata`        | `darkhunt.observation.metadata.<key>` | `span.metadata.<key>`            | one OTel attr per key — never a single JSON blob (backend can't iterate)                                                                                                                |
 
@@ -1441,14 +1441,12 @@ docusaurus page at:
 
 Read the docs page for:
 
-- Custom masking patterns (`mask.customPatterns`)
 - Multi-turn chat sessions (one trace, many generations under it)
 - RAG pipelines (retriever span + generation, attribution)
 - Streaming with `completionStartTime` for time-to-first-token
 - Recording errors with `level: 'ERROR'` + `statusMessage`
 - Filling in `userId` / `sessionId` after the trace opens (`trace.update(...)`)
 - The full configuration table and env-var precedence
-- Built-in masking ruleset (66 rules, 13 markers, validators)
 
 For the canonical attribute mapping (what trace-hub actually reads), see the
 "Supported fields" table above and verify against

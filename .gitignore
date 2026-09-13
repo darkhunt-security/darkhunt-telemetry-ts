@@ -9,7 +9,3 @@ coverage/
 .env.local
 .idea/
 .vscode/
-
-# Generated at install time from src/masking/rules/data-masking-rules.yaml
-# (see the `prepare` script in package.json — runs on `npm install`).
-src/masking/rules/rules.json

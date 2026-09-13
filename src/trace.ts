@@ -10,7 +10,6 @@ import {
   type Tracer,
 } from '@opentelemetry/api';
 import { ATTR } from './attributes.js';
-import type { Sanitizer } from './masking/index.js';
 import {
   ActiveChildHost,
   applyMetadataAttrs,
@@ -76,17 +75,14 @@ export interface TraceArgs {
   applicationId?: string;
   assessmentRunId?: string;
   /**
-   * Routing identifiers. **Not run through the masking sanitizer** — they are
-   * sent verbatim because the dashboard groups, filters, and de-duplicates by
-   * exact match. Do not put free-form text or user-controlled content (chat
-   * input, prompts, query strings) here; anything you pass will round-trip
-   * unmodified to the trace-hub. For PII-bearing identifiers, hash on the
-   * caller side first.
+   * Identifiers the dashboard groups, filters, and de-duplicates by exact match.
+   * Do not put free-form text or user-controlled content (chat input, prompts,
+   * query strings) here.
    */
   sessionId?: string;
-  /** See {@link TraceArgs.sessionId} — not masked, sent verbatim. */
+  /** See {@link TraceArgs.sessionId}. */
   userId?: string;
-  /** See {@link TraceArgs.sessionId} — not masked, sent verbatim. */
+  /** See {@link TraceArgs.sessionId}. */
   userEmail?: string;
   tags?: string[];
   metadata?: Metadata;
@@ -118,7 +114,7 @@ export interface TraceArgs {
    *
    * Use a small, stable set of values (`'research'`, `'deal-scoring'`) — never a
    * request id or anything derived from user input. Each distinct value is a permanent
-   * node in the topology. Sent verbatim, like the other identifiers: not masked.
+   * node in the topology.
    *
    * Leave unset for a single-agent process and configure `serviceName` on the client.
    */
@@ -144,13 +140,13 @@ export interface TraceArgs {
   observationType?: ObservationType;
   /**
    * Input the trace represents — e.g. the task/request the agent received.
-   * Masked and emitted as `darkhunt.observation.input`, so the root span carries
+   * Emitted as `darkhunt.observation.input`, so the root span carries
    * real content instead of being an empty container (which lets the backend
    * keep it and surfaces it in the timeline). Set the result via `output`,
    * {@link Trace.update}, or leave it and set it at the end.
    */
   input?: unknown;
-  /** Output the trace produced — the agent's result. Masked; emitted as
+  /** Output the trace produced — the agent's result. Emitted as
    *  `darkhunt.observation.output`. Can also be set later via {@link Trace.update}. */
   output?: unknown;
   /**
@@ -168,18 +164,18 @@ export interface TraceUpdateArgs {
   workspaceId?: string;
   applicationId?: string;
   assessmentRunId?: string;
-  /** See {@link TraceArgs.sessionId} — not masked, sent verbatim. */
+  /** See {@link TraceArgs.sessionId}. */
   sessionId?: string;
-  /** See {@link TraceArgs.sessionId} — not masked, sent verbatim. */
+  /** See {@link TraceArgs.sessionId}. */
   userId?: string;
-  /** See {@link TraceArgs.sessionId} — not masked, sent verbatim. */
+  /** See {@link TraceArgs.sessionId}. */
   userEmail?: string;
   tags?: string[];
   metadata?: Metadata;
   release?: string;
   environment?: string;
   observationType?: ObservationType;
-  /** Output the trace produced. Masked; emitted as `darkhunt.observation.output`. */
+  /** Output the trace produced. Emitted as `darkhunt.observation.output`. */
   output?: unknown;
 }
 
@@ -187,7 +183,6 @@ export class Trace extends ActiveChildHost {
   private readonly tracer: Tracer;
   private readonly rootSpan: OtelSpan;
   private readonly rootContext: Context;
-  private readonly _sanitizer?: Sanitizer;
   private _name?: string;
   private _tenantId: string;
   private _workspaceId: string;
@@ -205,10 +200,9 @@ export class Trace extends ActiveChildHost {
   private _input?: unknown;
   private _output?: unknown;
 
-  constructor(tracer: Tracer, args: TraceArgs, sanitizer?: Sanitizer) {
+  constructor(tracer: Tracer, args: TraceArgs) {
     super();
     this.tracer = tracer;
-    this._sanitizer = sanitizer;
     this._name = args.name;
     // Routing fields are validated upstream by DarkhuntTelemetry.trace(). Direct
     // Trace construction without them will silent-drop at the exporter (which
@@ -257,21 +251,12 @@ export class Trace extends ActiveChildHost {
     const parentContext =
       this._agent !== undefined ? ROOT_CONTEXT : (handoffContexts[0] ?? otContext.active());
     this.rootSpan = tracer.startSpan(
-      this.maskName(args.name ?? 'trace'),
+      args.name ?? 'trace',
       Object.keys(rootOptions).length > 0 ? rootOptions : undefined,
       parentContext
     );
     this.rootContext = otTrace.setSpan(parentContext, this.rootSpan);
     this.applyTraceAttrs(this.rootSpan);
-  }
-
-  /**
-   * Sanitize a span/trace name. Names land on the wire verbatim via
-   * `tracer.startSpan(name)`, so user-controlled values can leak; identifying
-   * fields like `userId` / `model` are intentionally not masked, names are.
-   */
-  maskName(name: string): string {
-    return this._sanitizer ? this._sanitizer.sanitize(name) : name;
   }
 
   get name(): string | undefined {
@@ -315,10 +300,6 @@ export class Trace extends ActiveChildHost {
   /** Logical agent owning this trace — the topology node identity. See {@link TraceArgs.agent}. */
   get agent(): string | undefined {
     return this._agent;
-  }
-  /** Shared sanitizer applied at the Span choke points; undefined when masking is disabled. */
-  get sanitizer(): Sanitizer | undefined {
-    return this._sanitizer;
   }
 
   span(name: string, options?: SpanOptions): Span {
@@ -375,14 +356,10 @@ export class Trace extends ActiveChildHost {
     this.rootSpan.end(endTime);
   }
 
-  /** Mask + emit an input/output attribute on the root span (mirrors Span.setIo). */
+  /** Emit an input/output attribute on the root span (mirrors Span.setIo). */
   private setIo(span: OtelSpan, key: string, value: unknown): void {
     if (value === null || value === undefined) return;
-    const sanitized = this._sanitizer ? this._sanitizer.sanitizeUnknown(value) : value;
-    span.setAttribute(
-      key,
-      typeof sanitized === 'string' ? sanitized : safeJsonStringify(sanitized)
-    );
+    span.setAttribute(key, typeof value === 'string' ? value : safeJsonStringify(value));
   }
 
   private applyTraceAttrs(span: OtelSpan): void {
@@ -393,18 +370,16 @@ export class Trace extends ActiveChildHost {
     span.setAttribute(ATTR.WORKSPACE_ID, this._workspaceId);
     span.setAttribute(ATTR.APPLICATION_ID, this._applicationId);
     span.setAttribute(ATTR.ASSESSMENT_RUN_ID, this._assessmentRunId);
-    if (this._name) span.setAttribute(ATTR.TRACE_NAME, this.maskName(this._name));
+    if (this._name) span.setAttribute(ATTR.TRACE_NAME, this._name);
     if (this._sessionId) span.setAttribute(ATTR.SESSION_ID, this._sessionId);
     if (this._userId) span.setAttribute(ATTR.USER_ID, this._userId);
     if (this._userEmail) span.setAttribute(ATTR.USER_EMAIL, this._userEmail);
     if (this._tags && this._tags.length > 0) {
-      const sanitizer = this._sanitizer;
-      const tags = sanitizer ? this._tags.map((t) => sanitizer.sanitize(t)) : this._tags;
-      span.setAttribute(ATTR.TRACE_TAGS, tags.join(','));
+      span.setAttribute(ATTR.TRACE_TAGS, this._tags.join(','));
     }
     if (this._release) span.setAttribute(ATTR.RELEASE, this._release);
     if (this._environment) span.setAttribute(ATTR.ENVIRONMENT, this._environment);
-    if (this._metadata) applyMetadataAttrs(span, this._metadata, this._sanitizer);
+    if (this._metadata) applyMetadataAttrs(span, this._metadata);
     this.setIo(span, ATTR.OBSERVATION_INPUT, this._input);
     this.setIo(span, ATTR.OBSERVATION_OUTPUT, this._output);
   }

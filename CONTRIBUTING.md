@@ -7,7 +7,7 @@ Thanks for your interest in contributing. This guide covers the basics.
 ```bash
 git clone https://github.com/darkhunt-security/darkhunt-telemetry-ts
 cd darkhunt-telemetry-ts
-npm install        # `prepare` hook generates src/masking/rules/rules.json from the YAML
+npm install
 npm run typecheck
 npm test
 ```
@@ -16,13 +16,14 @@ That's the full local loop. If those three commands pass, your environment is se
 
 ## What we accept
 
-| Welcome                                                                                                                          | Out of scope                                                                                       |
-| -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Bug fixes with a regression test                                                                                                 | Reformatting / re-styling unrelated code (use a separate PR)                                       |
-| New masking rules in `src/masking/rules/data-masking-rules.yaml` (must include `examples:` — the data-driven test enforces this) | New backends — the SDK speaks vanilla OTLP; backend-specific extensions belong in adapter packages |
-| New validators in `src/masking/validators/` (one file per validator, pure function, full test coverage)                          | Sweeping refactors without a discussed motivation — file an issue first                            |
-| Documentation improvements                                                                                                       | Adding heavyweight runtime dependencies (each new dep affects every consumer's bundle)             |
-| Performance fixes with before/after measurements                                                                                 | Removing tests to make CI green                                                                    |
+| Welcome                                          | Out of scope                                                                                       |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| Bug fixes with a regression test                 | Reformatting / re-styling unrelated code (use a separate PR)                                       |
+| Documentation improvements                       | New backends — the SDK speaks vanilla OTLP; backend-specific extensions belong in adapter packages |
+| Performance fixes with before/after measurements | Sweeping refactors without a discussed motivation — file an issue first                            |
+|                                                  | Adding heavyweight runtime dependencies (each new dep affects every consumer's bundle)             |
+|                                                  | Removing tests to make CI green                                                                    |
+|                                                  | Client-side data masking — PII is masked server-side in the Darkhunt platform on ingest            |
 
 For anything non-trivial, **open an issue first** to discuss the approach. Saves both sides effort if the answer is "we're going a different direction."
 
@@ -34,7 +35,7 @@ Before pushing:
 npm run format:check    # Prettier
 npm run lint            # ESLint
 npm run typecheck       # tsc --noEmit
-npm test                # Node test runner — 239+ tests, must all pass
+npm test                # Node test runner — must all pass
 npm run test:coverage   # generates coverage/lcov.info — Sonar check on PR
 ```
 
@@ -44,18 +45,8 @@ Your PR template (`.github/PULL_REQUEST_TEMPLATE.md`) has the full checklist.
 
 - **TypeScript strict mode** — `strict: true` + `noUncheckedIndexedAccess` are on. No `any` without a comment explaining why.
 - **No comments that just restate code** — the code says what; comments say _why_.
-- **Tests live next to the thing they test** — `src/masking/validators/luhn.ts` → `test/masking/validators.test.ts` (grouped by category).
-- **One validator per file** under `src/masking/validators/`; one test per validator with positive + negative cases.
+- **Tests are named after the behaviour they cover** — e.g. `src/transports/http.ts` → `test/transports.test.ts` (grouped by area).
 - **No emojis in source files or commit messages** unless the situation genuinely calls for one.
-
-## Adding a new masking rule
-
-The masking ruleset lives in `src/masking/rules/data-masking-rules.yaml`. To add a rule:
-
-1. Append a new entry under `rules:` with `name`, `description`, `marker`, `pattern`, optional `validation`, and at least one `examples:` entry.
-2. The `examples` array is **required** by the data-driven coverage test (`test/masking/rule-coverage.test.ts`) — every example must match its rule's pattern AND get redacted to its declared marker.
-3. If your rule needs a new validator (e.g. a checksum), add it under `src/masking/validators/`, register it in `validators/index.ts`'s `VALIDATORS` map, and reference it via `validation: <name>` in the YAML.
-4. `npm test` will regenerate `rules.json` and run the full suite, including coverage assertions for your new rule.
 
 ## Releasing (maintainers only)
 

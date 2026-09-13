@@ -21,14 +21,11 @@ PGP key for sensitive reports: available on request.
 In scope:
 
 - The SDK code itself — data leaks, unsafe defaults, misuse of crypto primitives
-- The bundled masking ruleset (`src/masking/rules/data-masking-rules.yaml`) — false-negatives that fail to redact sensitive data the rule claims to cover
-- The validator implementations (Luhn, IBAN mod-97, base58check, bech32, EIP-55) — incorrect validation that masks invalid inputs (false positives) or fails to mask valid inputs (false negatives)
-- Build-time codegen (`scripts/generate-rules-json.ts`) — anything that could ship malicious code via the `npm install` lifecycle
 
 Out of scope:
 
-- Vulnerabilities in the upstream Darkhunt platform (trace-hub, attack-discovery, dashboards) — those have their own disclosure channel; email `security@darkhunt.ai` and we'll route appropriately
-- Vulnerabilities in third-party dependencies — report upstream first (`@opentelemetry/*`, `@noble/hashes`, etc.); we'll ship a dep bump once they fix
+- Vulnerabilities in the upstream Darkhunt platform (trace-hub, attack-discovery, dashboards), including its server-side PII masking on ingest — those have their own disclosure channel; email `security@darkhunt.ai` and we'll route appropriately
+- Vulnerabilities in third-party dependencies — report upstream first (`@opentelemetry/*`, etc.); we'll ship a dep bump once they fix
 - Theoretical issues with no demonstrated exploit path
 - Best-practice suggestions without an associated security impact (file as a regular issue)
 
@@ -36,7 +33,7 @@ Out of scope:
 
 | Version              | Status                                                          |
 | -------------------- | --------------------------------------------------------------- |
-| Latest minor (`0.x`) | Security fixes shipped on demand                                |
+| Latest minor (`1.x`) | Security fixes shipped on demand                                |
 | Older minors         | Best-effort; we'll pull patches forward if it's straightforward |
 
 We don't currently maintain LTS branches.

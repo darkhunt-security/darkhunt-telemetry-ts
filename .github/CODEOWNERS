@@ -12,11 +12,6 @@
 # Same owner today; the per-path entries make it easy to add a security
 # sub-team or specific maintainer later without editing the default rule.
 
-# Data masking is the security-relevant core of this SDK.
-/src/masking/                       @darkhunt-security/engineering
-/src/masking/rules/                 @darkhunt-security/engineering
-/src/masking/validators/            @darkhunt-security/engineering
-
 # Exporter handles all outbound network + auth.
 /src/exporter.ts                    @darkhunt-security/engineering
 

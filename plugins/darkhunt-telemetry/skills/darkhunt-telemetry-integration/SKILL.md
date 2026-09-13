@@ -5,7 +5,7 @@ description: |
   trace-hub TypeScript SDK) into a Node.js / TypeScript service. Covers: install,
   creating an API key, singleton client setup, trace + generation + span
   emission, backdated `startTime`, graceful shutdown, routing-field discipline
-  (tenantId / workspaceId / applicationId), the masking layer, multi-agent topology
+  (tenantId / workspaceId / applicationId), multi-agent topology
   + agent handoffs (`trace.handoffToken()` / `handoffFrom`, span links, worker-vs-agent,
   loops & cycles), and the canonical SDK-field-to-trace-hub mapping (what attributes the
   backend actually reads). Auto-invoke when the user asks about adding LLM tracing,
@@ -18,7 +18,7 @@ description: |
 # Darkhunt telemetry SDK — integration guide
 
 This skill walks through wiring `@darkhunt-security/telemetry` into a TS/Node
-service. The full SDK reference (custom masking, multi-turn chat, RAG retriever
+service. The full SDK reference (multi-turn chat, RAG retriever
 spans, streaming time-to-first-token) lives at
 **https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript** — read it when
 the user needs something the patterns below don't cover.
@@ -30,8 +30,8 @@ BatchSpanProcessor, OTLP/protobuf transport) that ships spans — traces, LLM
 generations, tool calls, retrievals, guardrails — to Darkhunt trace-hub.
 Routing semantics (`tenantId` / `workspaceId` / `applicationId`) and the
 attribute schema are Darkhunt-specific; trace-hub is the intended receiver.
-Built-in client-side data masking redacts 66 secret/PII patterns before
-payloads leave the process.
+The SDK does not mask data — values are sent verbatim, and masking of PII
+happens server-side in the Darkhunt platform on ingest.
 
 Key shapes:
 
@@ -339,10 +339,10 @@ Set on `trace.span(name, opts)` / `trace.generation(name, opts)` / via
 | SDK option        | trace-hub field       | Notes                                                                                                                |
 | ----------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `observationType` | `span.type`           | `span` / `tool` / `agent` / `generation` / `event` / `chain` / `retriever` / `evaluator` / `embedding` / `guardrail` |
-| `input`           | `content.input`       | masked; objects walked recursively                                                                                   |
-| `output`          | `content.output`      | masked                                                                                                               |
+| `input`           | `content.input`       | sent verbatim; objects JSON-encoded                                                                                  |
+| `output`          | `content.output`      | sent verbatim                                                                                                        |
 | `level`           | `span.level`          | `'DEFAULT'` / `'DEBUG'` / `'WARNING'` / `'ERROR'`                                                                    |
-| `statusMessage`   | `error.message`       | masked; sets ERROR status when paired with `level: 'ERROR'`                                                          |
+| `statusMessage`   | `error.message`       | sets ERROR status when paired with `level: 'ERROR'`                                                                  |
 | `version`         | `span.version`        |                                                                                                                      |
 | `metadata`        | `span.metadata.<key>` | one attribute per key — never a single JSON blob                                                                     |
 
@@ -475,10 +475,9 @@ exits gracefully so `flush()` runs (a `kill -9` loses the in-memory batch).
 
 ## When to read the SDK docs
 
-The full SDK guide — custom masking patterns (`mask.customPatterns`),
-multi-turn chat sessions, RAG retriever spans, streaming `completionStartTime`
-for time-to-first-token, recording errors with `level: 'ERROR'` +
-`statusMessage`, the full configuration + env-var precedence table, and the
-built-in 66-rule masking ruleset — is at:
+The full SDK guide — multi-turn chat sessions, RAG retriever spans, streaming
+`completionStartTime` for time-to-first-token, recording errors with
+`level: 'ERROR'` + `statusMessage`, and the full configuration + env-var
+precedence table — is at:
 
 **https://docs.darkhunt.ai/darkhunt-ai-security/sdks/typescript**

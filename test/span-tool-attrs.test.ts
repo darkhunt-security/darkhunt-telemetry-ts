@@ -1,10 +1,8 @@
 /**
  * Tests for the tool-observation attributes (`gen_ai.tool.*`) emitted by
- * Span.setToolAttrs, both at construction and via update(). The masking layer
- * is central to this SDK's contract, so these assert that:
- *   - toolName / toolCallId round-trip through the masked-string choke point,
- *   - toolArguments are sanitized via setIo/sanitizeUnknown when a sanitizer is
- *     configured (secrets/PII redacted before they hit the wire),
+ * Span.setToolAttrs, both at construction and via update(). These assert that:
+ *   - toolName / toolCallId round-trip unchanged,
+ *   - toolArguments are emitted verbatim (strings as-is, objects as JSON),
  *   - toolCallId / toolName set through update()-after-construction survive.
  */
 
@@ -18,19 +16,18 @@ import {
 } from '@opentelemetry/sdk-trace-base';
 
 import { Trace } from '../src/trace.js';
-import { Sanitizer } from '../src/masking/sanitizer.js';
 import { GEN_AI } from '../src/attributes.js';
 
 const ROUTING = { tenantId: 't1', workspaceId: 'ws1', applicationId: 'app1' };
 
-/** Fresh in-memory tracer + Trace (masking on) per test, to isolate exports. */
-function setup(withSanitizer = true) {
+/** Fresh in-memory tracer + Trace per test, to isolate exports. */
+function setup() {
   const exporter = new InMemorySpanExporter();
   const provider = new BasicTracerProvider({
     spanProcessors: [new SimpleSpanProcessor(exporter)],
   });
   const tracer = provider.getTracer('test');
-  const trace = new Trace(tracer, ROUTING, withSanitizer ? new Sanitizer() : undefined);
+  const trace = new Trace(tracer, ROUTING);
   return { exporter, trace };
 }
 
@@ -56,29 +53,25 @@ describe('Span tool attributes (gen_ai.tool.*)', () => {
     const attrs = toolSpan(exporter).attributes;
     assert.equal(attrs[GEN_AI.TOOL_NAME], 'web_search');
     assert.equal(attrs[GEN_AI.TOOL_CALL_ID], 'call_123');
-    // Object arguments are JSON-stringified after sanitization.
+    // Object arguments are JSON-stringified.
     assert.equal(attrs[GEN_AI.TOOL_CALL_ARGUMENTS], JSON.stringify({ query: 'weather' }));
   });
 
-  it('sanitizes secrets/PII in structured toolArguments', () => {
+  it('emits structured toolArguments verbatim', () => {
     const { exporter, trace } = setup();
     trace
       .span('call', {
         observationType: 'tool',
-        // Split so this fixture does not itself trip secret scanners; the
-        // openai_key rule still matches the concatenated value.
-        toolArguments: { email: 'john@example.com', apiKey: 'sk-' + 'A'.repeat(24) },
+        toolArguments: { email: 'john@example.com', limit: 10 },
       })
       .end();
 
     const raw = toolSpan(exporter).attributes[GEN_AI.TOOL_CALL_ARGUMENTS];
     assert.equal(typeof raw, 'string');
-    const args = JSON.parse(raw as string);
-    assert.equal(args.email, '[EMAIL]');
-    assert.equal(args.apiKey, '[SECRET]');
+    assert.deepEqual(JSON.parse(raw as string), { email: 'john@example.com', limit: 10 });
   });
 
-  it('masks a secret embedded in a string toolArguments value', () => {
+  it('emits a string toolArguments value as-is', () => {
     const { exporter, trace } = setup();
     trace
       .span('call', {
@@ -87,8 +80,11 @@ describe('Span tool attributes (gen_ai.tool.*)', () => {
       })
       .end();
 
-    // String arguments stay a string (not JSON-wrapped) after sanitization.
-    assert.equal(toolSpan(exporter).attributes[GEN_AI.TOOL_CALL_ARGUMENTS], 'contact [EMAIL]');
+    // String arguments stay a string (not JSON-wrapped).
+    assert.equal(
+      toolSpan(exporter).attributes[GEN_AI.TOOL_CALL_ARGUMENTS],
+      'contact john@example.com'
+    );
   });
 
   it('preserves toolName / toolCallId set via update()-after-construction', () => {
@@ -100,20 +96,5 @@ describe('Span tool attributes (gen_ai.tool.*)', () => {
     const attrs = toolSpan(exporter).attributes;
     assert.equal(attrs[GEN_AI.TOOL_NAME], 'lookup');
     assert.equal(attrs[GEN_AI.TOOL_CALL_ID], 'call_456');
-  });
-
-  it('leaves tool attributes verbatim when masking is disabled', () => {
-    const { exporter, trace } = setup(false);
-    trace
-      .span('call', {
-        observationType: 'tool',
-        toolName: 'web_search',
-        toolArguments: 'contact john@example.com',
-      })
-      .end();
-
-    const attrs = toolSpan(exporter).attributes;
-    assert.equal(attrs[GEN_AI.TOOL_NAME], 'web_search');
-    assert.equal(attrs[GEN_AI.TOOL_CALL_ARGUMENTS], 'contact john@example.com');
   });
 });

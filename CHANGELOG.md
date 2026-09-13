@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The next release is **1.0.0**: client-side data masking has been removed, which
+is a breaking change to the public API.
+
+### Removed
+
+- **BREAKING: client-side data masking.** The SDK no longer masks anything
+  before export. Inputs, outputs, chat messages, system instructions, span /
+  trace / generation names, tags, metadata keys and values, model parameters,
+  prompt name/version, tool fields and status messages are all sent verbatim.
+  Masking of PII happens server-side in the Darkhunt platform on ingest. The
+  client-side rules produced too many false positives to be worth keeping.
+
+  Removed from the public API, with no replacement or deprecation shim:
+  - the `mask` option on `DarkhuntTelemetryOptions` (`mask.enabled`,
+    `mask.customPatterns`) and the exported `MaskingOptions` type;
+  - the exported `Sanitizer` class and `CustomPattern` type.
+
+  Per-client custom patterns are dropped. Migration: delete any `mask: {...}`
+  option and any direct use of `Sanitizer`; no other call sites change.
+
+- **Dependencies:** `@noble/hashes` (runtime) and `yaml` (dev) are no longer
+  needed and have been removed, as has the `generate-rules-json` build step.
+
+### Changed
+
+- A circular reference inside an object passed as `input`, `output`, messages,
+  metadata or model parameters is still serialized as `"[circular]"`; a shared
+  but non-circular reference is now serialized in full at each occurrence
+  instead of being replaced by `"[circular]"`.
+- Objects are now serialized with plain `JSON.stringify` semantics (plus the
+  BigInt and circular-reference handling above), so a value with a `toJSON`
+  method — such as a `Date` — serializes through it rather than as `{}`.
+
 ### Added
 
 - **Per-trace agent identity (`agent`).** New `agent` option on `dh.trace({...})`
