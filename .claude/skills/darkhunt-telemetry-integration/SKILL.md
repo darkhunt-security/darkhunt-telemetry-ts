@@ -38,7 +38,9 @@ Darkhunt-specific span exporter built on OpenTelemetry primitives
 trace-hub. Routing semantics (`tenantId` / `workspaceId` / `applicationId`)
 and the attribute schema are Darkhunt-specific; trace-hub is the only intended
 receiver. The SDK does not mask data — values are sent verbatim, and masking
-of PII happens server-side in the Darkhunt platform on ingest.
+of PII happens server-side in the Darkhunt platform on ingest. That masking does **not** cover
+metadata values, tags or routing IDs (`sessionId`, `userId`, `userEmail`) — never put
+secrets or unhashed PII there.
 
 Key shapes:
 

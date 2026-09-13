@@ -369,6 +369,7 @@ Full table, all routing-field env vars, and per-option behavior: [docs.darkhunt.
 ## Data masking
 
 The SDK does not mask data. Inputs, outputs, messages, names, tags, metadata and status messages are sent verbatim; masking of PII happens server-side in the Darkhunt platform on ingest.
+Server-side masking covers inputs, outputs, messages, system prompts, tool calls, span names and status messages; **metadata values, tags and routing IDs are stored as sent**, so keep secrets and PII out of them.
 
 ## Documentation
 
