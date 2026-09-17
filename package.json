@@ -83,18 +83,18 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
-    "@temporalio/common": "^1.20.2",
-    "@temporalio/worker": "^1.20.2",
+    "@temporalio/common": "^1.23.0",
+    "@temporalio/worker": "^1.23.0",
     "@temporalio/workflow": "^1.20.2",
     "@types/node": "^25.0.0",
     "c8": "^11.0.0",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^10.0.0",
     "eslint-plugin-prettier": "^5.5.5",
-    "prettier": "^3.8.0",
-    "tsx": "^4.19.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.13",
     "typescript": "^5.9.0",
-    "typescript-eslint": "^8.0.0"
+    "typescript-eslint": "^8.70.0"
   },
   "peerDependencies": {
     "@temporalio/common": ">=1.11.0 <2",
