@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The next release is **1.0.0**: client-side data masking has been removed, which
 is a breaking change to the public API.
 
+### Changed
+
+- **Trace tags, release, environment and metadata are now set on every span**,
+  not only the trace root. The root span ends last, so it is usually exported in
+  a later batch than its children, and a root-only value never reached them on
+  the backend. A span's own metadata still wins on a key the trace also sets.
+  `Trace` gains read-only `tags`, `metadata`, `release` and `environment` getters.
+
 ### Removed
 
 - **BREAKING: client-side data masking.** The SDK no longer masks anything

@@ -297,6 +297,18 @@ export class Trace extends ActiveChildHost {
   get userEmail(): string | undefined {
     return this._userEmail;
   }
+  get tags(): string[] | undefined {
+    return this._tags;
+  }
+  get metadata(): Metadata | undefined {
+    return this._metadata;
+  }
+  get release(): string | undefined {
+    return this._release;
+  }
+  get environment(): string | undefined {
+    return this._environment;
+  }
   /** Logical agent owning this trace — the topology node identity. See {@link TraceArgs.agent}. */
   get agent(): string | undefined {
     return this._agent;
