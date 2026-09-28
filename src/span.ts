@@ -476,6 +476,14 @@ export class Span extends ActiveChildHost {
     if (t.userId) this.otelSpan.setAttribute(ATTR.USER_ID, t.userId);
     if (t.userEmail) this.otelSpan.setAttribute(ATTR.USER_EMAIL, t.userEmail);
     if (t.name) this.otelSpan.setAttribute(ATTR.TRACE_NAME, t.name);
+    // Trace-level context, also on every span. The root span is exported last — it ends
+    // after its children — so children usually reach the backend in an earlier batch than
+    // the root, and a root-only value never reaches them. Trace metadata goes first so the
+    // span's own metadata, applied after this, wins on a shared key.
+    if (t.tags && t.tags.length > 0) this.otelSpan.setAttribute(ATTR.TRACE_TAGS, t.tags.join(','));
+    if (t.release) this.otelSpan.setAttribute(ATTR.RELEASE, t.release);
+    if (t.environment) this.otelSpan.setAttribute(ATTR.ENVIRONMENT, t.environment);
+    if (t.metadata) applyMetadataAttrs(this.otelSpan, t.metadata);
   }
 }
 
