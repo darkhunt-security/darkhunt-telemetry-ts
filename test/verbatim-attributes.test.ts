@@ -8,33 +8,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { SpanStatusCode } from '@opentelemetry/api';
-import {
-  BasicTracerProvider,
-  InMemorySpanExporter,
-  SimpleSpanProcessor,
-  type ReadableSpan,
-} from '@opentelemetry/sdk-trace-base';
 
 import { ATTR, GEN_AI } from '../src/attributes.js';
 import { safeJsonStringify } from '../src/span.js';
 import { Trace } from '../src/trace.js';
+import { ROUTING, setup, spanByName } from './support/in-memory-tracer.js';
 
-const ROUTING = { tenantId: 't1', workspaceId: 'ws1', applicationId: 'app1' };
 const EMAIL = 'john@example.com';
-
-function setup() {
-  const exporter = new InMemorySpanExporter();
-  const provider = new BasicTracerProvider({
-    spanProcessors: [new SimpleSpanProcessor(exporter)],
-  });
-  return { exporter, tracer: provider.getTracer('test') };
-}
-
-function spanByName(exporter: InMemorySpanExporter, name: string): ReadableSpan {
-  const span = exporter.getFinishedSpans().find((s) => s.name === name);
-  assert.ok(span, `expected an exported span named "${name}"`);
-  return span;
-}
 
 describe('attributes are emitted verbatim', () => {
   it('trace root: name, tags, metadata, input and output', () => {

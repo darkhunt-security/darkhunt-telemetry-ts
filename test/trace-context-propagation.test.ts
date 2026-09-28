@@ -6,31 +6,10 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import {
-  BasicTracerProvider,
-  InMemorySpanExporter,
-  SimpleSpanProcessor,
-  type ReadableSpan,
-} from '@opentelemetry/sdk-trace-base';
 
 import { ATTR } from '../src/attributes.js';
 import { Trace } from '../src/trace.js';
-
-const ROUTING = { tenantId: 't1', workspaceId: 'ws1', applicationId: 'app1' };
-
-function setup() {
-  const exporter = new InMemorySpanExporter();
-  const provider = new BasicTracerProvider({
-    spanProcessors: [new SimpleSpanProcessor(exporter)],
-  });
-  return { exporter, tracer: provider.getTracer('test') };
-}
-
-function spanByName(exporter: InMemorySpanExporter, name: string): ReadableSpan {
-  const span = exporter.getFinishedSpans().find((s) => s.name === name);
-  assert.ok(span, `expected an exported span named "${name}"`);
-  return span;
-}
+import { ROUTING, setup, spanByName } from './support/in-memory-tracer.js';
 
 describe('trace context on child spans', () => {
   it('copies tags, release, environment and metadata onto every span', () => {
