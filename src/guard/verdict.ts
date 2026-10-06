@@ -1,6 +1,7 @@
 /** What one `/verify` check decided, and the error a blocked call raises. */
 
-export type Stage = 'TOOL_CALL' | 'TOOL_RESULT';
+/** Where Darkhunt checks: the request, a tool call, its result, or the answer. */
+export type Stage = 'INPUT' | 'TOOL_CALL' | 'TOOL_RESULT' | 'OUTPUT';
 
 export interface RuleMatch {
   ruleId: string;
@@ -61,14 +62,24 @@ export class Verdict {
   }
 }
 
+/** What to show in place of whatever `verdict` blocked. */
+export function refusal(verdict: Verdict): string {
+  switch (verdict.stage) {
+    case 'INPUT':
+      return `Blocked by Darkhunt: ${verdict.reason}. The request was not processed.`;
+    case 'OUTPUT':
+      return `Withheld by Darkhunt: ${verdict.reason}. The answer was not shown.`;
+    case 'TOOL_CALL':
+      return `Blocked by Darkhunt: ${verdict.reason}. The ${verdict.tool} tool was not run.`;
+    default:
+      return `Withheld by Darkhunt: ${verdict.reason}. The ${verdict.tool} tool ran, but its output was withheld.`;
+  }
+}
+
 /** Thrown by a guarded tool with `onDeny: 'throw'` when Darkhunt blocks it. */
 export class DarkhuntBlockedError extends Error {
   constructor(readonly verdict: Verdict) {
-    super(
-      verdict.stage === 'TOOL_CALL'
-        ? `Blocked by Darkhunt: ${verdict.reason}. The ${verdict.tool} tool was not run.`
-        : `Withheld by Darkhunt: ${verdict.reason}. The ${verdict.tool} tool ran, but its output was withheld.`
-    );
+    super(refusal(verdict));
     this.name = 'DarkhuntBlockedError';
   }
 }

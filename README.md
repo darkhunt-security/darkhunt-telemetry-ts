@@ -9,7 +9,7 @@
 
 TypeScript SDK for sending LLM traces, generations, and observations to the [Darkhunt platform](https://app.darkhunt.ai) for persistence and security data enrichment. Built on OpenTelemetry primitives. The SDK sends values as you give them; masking of PII happens server-side in the Darkhunt platform on ingest.
 
-It can also **enforce**: [`guard()`](#guard-tool-calls-guard) asks Darkhunt before a tool runs and before its output is used, so dashboard rules can block it — optionally [through Microsoft AGT](#microsoft-agent-governance-toolkit-optional-experimental).
+It can also **enforce**: [`guard()`](#guard-tool-calls-guard) asks Darkhunt before a tool runs and before its output is used, so dashboard rules can block it — optionally [through Microsoft AGT](#microsoft-agent-governance-toolkit-optional-experimental). [`checkInput` / `checkOutput`](#guard-the-request-and-the-answer) do the same for the request before the agent sees it and the answer before the user does.
 
 > 🤖 **Skip the manual wiring** — if you use Claude Code, install the Darkhunt plugin once:
 >
@@ -443,6 +443,38 @@ Notes:
   configured routing, but carry no session.
 - **The current run comes from the active OTel context.** That needs the context
   manager, which the client registers by default.
+
+## Guard the request and the answer
+
+`checkInput` sends the request to `/verify` at the `INPUT` stage before the agent
+sees it, and `checkOutput` sends the answer at `OUTPUT` before the user does. They
+use the same configuration as `guard()`: mode, fail mode, routing, `onVerdict`, and
+a `guardrail` span under the current trace. Stopping the work is up to you, since
+only your code knows what "don't run the agent" or "don't show the answer" means:
+
+```ts
+import { checkInput, checkOutput, refusal } from '@darkhunt-security/telemetry/guard';
+
+return trace.activate(async () => {
+  const verdict = await checkInput(request);
+  if (verdict.blocked) return refusal(verdict); // "Blocked by Darkhunt: <rule>. The request was not processed."
+  const answer = await runAgent(request);
+  const out = await checkOutput(answer);
+  return out.blocked ? refusal(out) : answer;
+});
+```
+
+- **Pass messages for context:** `checkInput([{ role: 'system', content: ... }, { content: request }])`.
+  A plain string is sent as one `user` (input) or `assistant` (output) message.
+- **Outside a trace:** `checkOutput(answer, { sessionId })` files the check under a
+  run you have already handed off (a gateway checking the answer afterwards).
+- **Budget:** content is classified by a model, so these checks use
+  `resultTimeoutMs`, not the tighter `callTimeoutMs`.
+- **Size:** only the first `maxResultBytes` of each message are sent, as with a tool
+  result; anything after that is not checked. Raise the cap
+  (`DARKHUNT_GUARD_MAX_RESULT`) if your requests or answers can be longer.
+- **Act on `verdict.blocked`,** as with tools: a DENY in `shadow` mode is `denied`
+  but not `blocked`.
 
 ## Microsoft Agent Governance Toolkit (optional, experimental)
 

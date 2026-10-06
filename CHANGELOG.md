@@ -23,6 +23,12 @@ is a breaking change to the public API.
     `DarkhuntBlockedError`, or call your own function.
   - **Recording:** each check is a `guardrail` span under the tool's span.
   - **Configuration:** `configureGuard()` or `DARKHUNT_GUARD_*`.
+- **`checkInput` / `checkOutput`** (also at `./guard`) check the request (`INPUT`)
+  before the agent sees it and the answer (`OUTPUT`) before the user does, with
+  `guard()`'s configuration and `guardrail` spans. The caller acts on
+  `verdict.blocked`; `refusal(verdict)` gives the text to show instead, and
+  `{ sessionId }` files a check made outside a trace. `refusal` and
+  `DarkhuntBlockedError` now name all four stages.
 - **`trace.activate(fn)`** runs `fn` with the trace as the current run without
   ending it, and **`currentObservation()`** returns that run. Every `Trace` /
   `Span` now records itself in its own OTel context. `Span` gains read-only
