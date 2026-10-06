@@ -10,6 +10,7 @@ import {
   type Tracer,
 } from '@opentelemetry/api';
 import { ATTR } from './attributes.js';
+import { OBSERVATION_KEY } from './current.js';
 import {
   ActiveChildHost,
   applyMetadataAttrs,
@@ -255,7 +256,10 @@ export class Trace extends ActiveChildHost {
       Object.keys(rootOptions).length > 0 ? rootOptions : undefined,
       parentContext
     );
-    this.rootContext = otTrace.setSpan(parentContext, this.rootSpan);
+    // The trace is also the current observation wherever its context is active.
+    this.rootContext = otTrace
+      .setSpan(parentContext, this.rootSpan)
+      .setValue(OBSERVATION_KEY, this);
     this.applyTraceAttrs(this.rootSpan);
   }
 
@@ -275,6 +279,16 @@ export class Trace extends ActiveChildHost {
    */
   handoffToken(): HandoffToken {
     return spanContextToToken(otTrace.getSpanContext(this.rootContext));
+  }
+
+  /**
+   * Run `fn` with this trace as the current run — its root ACTIVE in the ambient OTel
+   * context — without ending the trace (unlike `startActiveSpan`). Code that holds the
+   * trace but calls tools outside a span uses this so guarded tools (see `guard`) read
+   * the run's session and routing. Returns whatever `fn` returns (a promise included).
+   */
+  activate<T>(fn: () => T): T {
+    return otContext.with(this.rootContext, fn);
   }
   get tenantId(): string {
     return this._tenantId;

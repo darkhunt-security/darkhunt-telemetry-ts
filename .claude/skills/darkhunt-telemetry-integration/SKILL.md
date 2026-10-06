@@ -13,7 +13,11 @@ description: |
   sending spans to trace-hub, integrating Darkhunt observability, wiring
   DarkhuntTelemetry / `client.trace()` / `trace.generation()` calls, or building a
   multi-agent system where agents hand off to each other (agent topology / handoff
-  links / loops).
+  links / loops). Also covers guarding tool calls with `guard()` (Darkhunt rules
+  block a call before it runs or withhold its output) and plugging Darkhunt in as
+  the policy behind Microsoft's Agent Governance Toolkit (AGT) — auto-invoke when
+  the user asks to guard, block or enforce policy on an agent's tool calls, or to
+  integrate AGT.
 ---
 
 # Darkhunt telemetry SDK — integration guide
@@ -1248,6 +1252,96 @@ services show up unconnected; you flagged it and named the architectural work re
    connecting them is an **architecture change** (carry `handoffToken()` across that medium), not a
    telemetry setting — see "Logical coupling through a datastore/queue" above.
 
+## Guarding tool calls — `guard()` (enforcement, not just tracing)
+
+Tracing records what a tool did. `guard()` lets the **rules in the Darkhunt
+dashboard stop it**. It calls the guardrail manager's `/verify` twice per call:
+
+- **`TOOL_CALL`**, before the function runs: a block means it never runs;
+- **`TOOL_RESULT`**, before the caller sees the output: a block means it is withheld.
+
+Only add it when the user asks to guard, block or enforce. Plain observability
+doesn't need it.
+
+### Where it goes
+
+```ts
+import { configureGuard, guard } from '@darkhunt-security/telemetry';
+
+configureGuard({ mode: 'shadow' }); // start in shadow; see "Rollout"
+
+// Wrap the FUNCTION you hand to the framework's tool helper:
+const sendReferral = tool({
+  description: '…',
+  inputSchema: z.object({ to: z.string(), message: z.string() }),
+  execute: guard(async function send_referral(input) {
+    /* … */
+  }),
+});
+```
+
+- **Wrap the function, not the framework.** `guard(fn)` returns an **async**
+  function with the same parameters. Put it where the framework takes your
+  implementation (`execute`, `func`, a handler).
+- **The arguments sent default to the first argument** when it is a plain
+  object, which is the tool input; later arguments are framework context and are
+  left out. Use `args: (...a) => ({ … })` for positional tools.
+- **Name tools the way the rules match them.** `name` defaults to the
+  function's name: give anonymous functions a name, or pass `{ name: 'send_referral' }`.
+- **Run the agent inside the run.** Use `trace.activate(() => runAgent())`, or
+  call tools under `startActiveSpan`, so each check carries the run's
+  `sessionId`, `userId` and routing. The current run comes from the active OTel
+  context; the client registers the context manager by default. Outside a run
+  the checks still go out, but with no session.
+- **An existing tool span is reused.** If the code already opens a `tool` span
+  for this tool with `startActiveSpan`, the guard puts its `guardrail` spans
+  under it.
+
+### Pick `onDeny` per tool, by who reads the result
+
+| Who consumes the result               | `onDeny`                               | Why                                                         |
+| ------------------------------------- | -------------------------------------- | ----------------------------------------------------------- |
+| **A model** (the LLM picked the tool) | `'return'` (default): a refusal string | the model reads "Blocked by Darkhunt: …" and can explain it |
+| **Code** that can do without the data | a function, e.g. `() => []`            | the pipeline continues; the block is still recorded         |
+| **Code** that can't continue          | `'throw'`: `DarkhuntBlockedError`      | fail loudly rather than run on a refusal string             |
+
+### Rollout and verification
+
+1. **Start in `shadow`** (`DARKHUNT_GUARD_MODE=shadow`, the default). Checks run
+   and are recorded as "Would block (shadow)", but nothing is stopped.
+2. **Then `enforce` with an explicit fail mode.** `enforce` _requires_
+   `DARKHUNT_GUARD_FAIL=open|closed`. Use `closed` for tools that send or write
+   sensitive data, and `open` where availability matters more.
+3. **Make blocks visible in the app's own result.** Pass
+   `configureGuard({ onVerdict })` to add blocked or denied verdicts to the
+   run's output.
+4. **Verify.** Create a rule that blocks one tool by name (`toolName==<tool>`,
+   ENFORCE, `TOOL_CALL`) and run the agent. The tool must not run, the result
+   must show the block, and the dashboard's enforcement log must list it under
+   the run's session.
+
+### If the app uses Microsoft AGT (Agent Governance Toolkit)
+
+Keep AGT, and make Darkhunt its policy. Give the AGT manifest a
+`type: custom, adapter: darkhunt` policy on `pre_tool_call` / `post_tool_call`,
+and build the control with
+`AgentControl.fromPath(path, undefined, new DarkhuntPolicy())`
+(`@darkhunt-security/telemetry/agt`). Then:
+
+- **AGT's framework adapters don't cover tools.** Wire the tools where they are
+  dispatched:
+  - `agtTool(control, fn)` for a tool function;
+  - `runGoverned(control, name, args, execute)` for a loop that dispatches by name;
+  - `checkToolPoint(control, 'pre_tool_call' | 'post_tool_call', name, args, { result })`
+    for allow/deny hooks only.
+- **Version:** pin `agent-control-specification@0.3.1-beta.0`, the version in
+  AGT's latest official release (v4.1.0). It's an optional peer dependency with
+  prebuilt binaries. Manifests must declare
+  `agent_control_specification_version: 0.3.1-beta`.
+- **The run is handed over for you.** AGT calls the policy back from native
+  code, where the async context is gone, and the helpers pass the run through.
+  Pass `{ host: trace }` when calling them outside the run's context.
+
 ## Verification
 
 After wiring, run:
@@ -1423,6 +1517,9 @@ inputMessages, systemInstructions })` (known at start) → `.end({ outputMessage
     chain to nest), and that connecting them is an architecture change, not a telemetry setting. See
     "On completion, report the topology shape to the user." For OSS/example repos, persist that note
     in the README too.
+12. **`guard` wrapped around a framework tool _object_.** It needs the implementation function (`execute` / `func`), not the tool the framework built from it.
+13. **`enforce` without `DARKHUNT_GUARD_FAIL`.** `configureGuard` throws. Choose `open` or `closed` deliberately.
+14. **Guarded tools called outside the run.** The checks carry no session, so session rules can't apply and the enforcement log can't group them. Use `trace.activate(...)`.
 
 ## Reference files in attack-discovery
 

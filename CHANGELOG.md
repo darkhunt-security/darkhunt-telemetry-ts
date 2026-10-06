@@ -10,6 +10,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The next release is **1.0.0**: client-side data masking has been removed, which
 is a breaking change to the public API.
 
+### Added
+
+- **`guard()` — Darkhunt enforcement on tool calls** (also at `./guard`).
+  - **The checks:** a guarded function is checked against the guardrail
+    manager's `/verify` before it runs (`TOOL_CALL`) and before its output is
+    used (`TOOL_RESULT`), so dashboard rules can block the call or withhold the
+    result. The guarded function is always async.
+  - **Modes:** `off` / `shadow` / `enforce`, with an explicit
+    `fail: 'open' | 'closed'`.
+  - **On a block** (`onDeny`): return a refusal string, throw
+    `DarkhuntBlockedError`, or call your own function.
+  - **Recording:** each check is a `guardrail` span under the tool's span.
+  - **Configuration:** `configureGuard()` or `DARKHUNT_GUARD_*`.
+- **`trace.activate(fn)`** runs `fn` with the trace as the current run without
+  ending it, and **`currentObservation()`** returns that run. Every `Trace` /
+  `Span` now records itself in its own OTel context. `Span` gains read-only
+  `observationType`, `toolName` and `otel` getters.
+- **Microsoft Agent Governance Toolkit (AGT) plug-in** (`./agt`, optional, experimental).
+  - **`DarkhuntPolicy`:** an ACS `custom` policy (`adapter: darkhunt`) that
+    decides `pre_tool_call` / `post_tool_call` with `/verify`.
+  - **Entry points:** `agtTool`, `runGoverned` and `checkToolPoint` put tool
+    calls behind an `AgentControl`.
+  - **Version:** `agent-control-specification` is an optional peer dependency,
+    pinned to `0.3.1-beta.0`, the version in AGT's latest official release
+    (v4.1.0).
+
 ### Changed
 
 - **Trace tags, release, environment and metadata are now set on every span**,

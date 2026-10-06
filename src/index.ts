@@ -1,5 +1,22 @@
 export { DarkhuntTelemetry, type DarkhuntTelemetryOptions } from './client.js';
 export { registerOtelContextGlobals } from './otel-globals.js';
+export { currentObservation } from './current.js';
+// Darkhunt enforcement on tool calls (also at the `./guard` subpath). The optional
+// Microsoft AGT plug-in lives at the separate `./agt` subpath.
+export {
+  guard,
+  configureGuard,
+  getGuardConfig,
+  resetGuardConfig,
+  Verdict,
+  DarkhuntBlockedError,
+  type GuardOptions,
+  type GuardConfig,
+  type GuardConfigOptions,
+  type GuardMode,
+  type FailMode,
+  type RuleMatch,
+} from './guard/index.js';
 export { Trace, type TraceArgs, type TraceUpdateArgs, type HandoffToken } from './trace.js';
 export {
   Span,
