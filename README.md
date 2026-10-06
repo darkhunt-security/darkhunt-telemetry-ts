@@ -9,6 +9,8 @@
 
 TypeScript SDK for sending LLM traces, generations, and observations to the [Darkhunt platform](https://app.darkhunt.ai) for persistence and security data enrichment. Built on OpenTelemetry primitives. The SDK sends values as you give them; masking of PII happens server-side in the Darkhunt platform on ingest.
 
+It can also **enforce**: [`guard()`](#guard-tool-calls-guard) asks Darkhunt before a tool runs and before its output is used, so dashboard rules can block it — optionally [through Microsoft AGT](#microsoft-agent-governance-toolkit-optional-experimental).
+
 > 🤖 **Skip the manual wiring** — if you use Claude Code, install the Darkhunt plugin once:
 >
 > ```
@@ -370,6 +372,145 @@ Full table, all routing-field env vars, and per-option behavior: [docs.darkhunt.
 
 The SDK does not mask data. Inputs, outputs, messages, names, tags, metadata and status messages are sent verbatim; masking of PII happens server-side in the Darkhunt platform on ingest.
 Server-side masking covers inputs, outputs, messages, system prompts, tool calls, span names and status messages; **metadata values, tags and routing IDs are stored as sent**, so keep secrets and PII out of them.
+
+## Guard tool calls (`guard`)
+
+`guard()` asks Darkhunt before a tool runs, and before its output is used, so the
+rules in the Darkhunt dashboard can **stop** a call, not only record it. Each
+guarded call makes up to two checks against the guardrail manager's `/verify`:
+
+- **`TOOL_CALL`**, with the arguments, before the function runs. A block means
+  the function never runs.
+- **`TOOL_RESULT`**, with what it returned (`after: true`, the default). A block
+  means it ran but its output is withheld.
+
+```ts
+import { configureGuard, guard } from '@darkhunt-security/telemetry';
+
+configureGuard({ mode: 'enforce', fail: 'open' }); // or DARKHUNT_GUARD_* env vars
+
+// Wrap the function you hand to your framework's tool helper.
+const sendReferral = guard(async function send_referral(input: { to: string; message: string }) {
+  /* ... */
+});
+
+await trace.activate(() => runAgent()); // the run the checks belong to (session, user, routing)
+```
+
+It wraps the function itself, so it works with any framework (or none). The
+guarded function is **always async**, because the checks are network calls. Each
+check is recorded as a `guardrail` span under the tool's span; an existing span
+for the same tool is reused rather than nested.
+
+**Arguments sent.** By default this is the **first argument** when it is a plain
+object, which is the usual tool-input shape: later arguments are typically
+framework context and are left out. With no arguments it is `{}`; otherwise
+`{ args: [...] }`. Pass `args: (...a) => ({ ... })` to choose.
+
+**What the caller gets on a block (`onDeny`):**
+
+| `onDeny`             | Result                                                                      | For                                          |
+| -------------------- | --------------------------------------------------------------------------- | -------------------------------------------- |
+| `'return'` (default) | a string: _"Blocked by Darkhunt: \<rule\>. The \<tool\> tool was not run."_ | tools a model calls: it reads the refusal    |
+| `'throw'`            | a `DarkhuntBlockedError` (with `.verdict`)                                  | code paths that cannot continue              |
+| a function           | its return value, given the `Verdict` (e.g. `() => []`)                     | pipelines that can continue without the data |
+
+**Modes and failure.** `off` makes no calls. `shadow` (the default) checks and
+records but never blocks: a DENY is recorded as _"Would block (shadow)"_.
+`enforce` blocks on DENY. When Darkhunt does not answer (timeout, network,
+HTTP error), `fail: 'open'` lets the call through and `fail: 'closed'` blocks
+it. Enforce mode **requires** an explicit `fail`.
+
+| Option (`configureGuard({...})`)             | Env var                                       | Default                                     |
+| -------------------------------------------- | --------------------------------------------- | ------------------------------------------- |
+| `url`                                        | `DARKHUNT_GUARD_URL`                          | `https://api.darkhunt.ai/guardrail-manager` |
+| `apiKey`                                     | `DARKHUNT_API_KEY`                            | —                                           |
+| `tenantId` / `workspaceId` / `applicationId` | `DARKHUNT_TENANT_ID` / …                      | taken from the current trace first          |
+| `mode`                                       | `DARKHUNT_GUARD_MODE`                         | `shadow`                                    |
+| `fail`                                       | `DARKHUNT_GUARD_FAIL`                         | — (required for `enforce`)                  |
+| `callTimeoutMs` / `resultTimeoutMs`          | `DARKHUNT_GUARD_TIMEOUT_CALL` / `_RESULT` (s) | `1500` / `5000` ms                          |
+| `maxResultBytes`                             | `DARKHUNT_GUARD_MAX_RESULT`                   | `65536` (larger results are sent truncated) |
+| `headers`                                    | `DARKHUNT_GUARD_HEADERS` (`K=V,K2=V2`)        | —                                           |
+| `onVerdict`                                  | —                                             | — (called with every `Verdict`)             |
+
+Notes:
+
+- **Name tools the way your rules match them**: `guard(fn, { name: 'db.get_patient' })`.
+  The default is the function's name, and anonymous functions must be named.
+- **Call guarded tools inside the run.** `trace.activate(fn)` makes the trace
+  current without ending it, and `startActiveSpan` / `startActiveGeneration` do
+  the same for their span. Outside a run the checks still go out on the
+  configured routing, but carry no session.
+- **The current run comes from the active OTel context.** That needs the context
+  manager, which the client registers by default.
+
+## Microsoft Agent Governance Toolkit (optional, experimental)
+
+If your agents already use Microsoft's
+[Agent Governance Toolkit](https://github.com/microsoft/agent-governance-toolkit)
+(AGT), Darkhunt can be the policy behind it. AGT's Agent Control Specification
+(ACS) runtime stops an agent at intervention points and asks a policy for a
+verdict. `DarkhuntPolicy` answers `pre_tool_call` and `post_tool_call` with
+`/verify`, so the decisions follow the same dashboard rules, enforcement log and
+`guardrail` spans as `guard()`.
+
+```bash
+npm install agent-control-specification@0.3.1-beta.0   # AGT's latest official release (v4.1.0)
+```
+
+```yaml
+# agt.yaml
+agent_control_specification_version: 0.3.1-beta
+metadata: { name: my-agent }
+policies:
+  darkhunt: { type: custom, adapter: darkhunt }
+intervention_points:
+  pre_tool_call: { policy: { id: darkhunt }, policy_target: $.tool_call.args }
+  post_tool_call: { policy: { id: darkhunt }, policy_target: $.tool_result }
+annotators: {}
+```
+
+```ts
+import { AgentControl } from 'agent-control-specification';
+import {
+  DarkhuntPolicy,
+  agtTool,
+  checkToolPoint,
+  runGoverned,
+} from '@darkhunt-security/telemetry/agt';
+
+const control = AgentControl.fromPath('agt.yaml', undefined, new DarkhuntPolicy());
+
+const getHoldings = agtTool(control, async function get_holdings(input: { householdId: string }) {
+  /* ... */
+}); // a tool function
+
+// a loop that dispatches tools by name:
+const out = await runGoverned(control, call.name, call.input, () => run(call));
+
+// allow/deny hooks only:
+const refusal = await checkToolPoint(control, 'pre_tool_call', toolName, toolInput);
+```
+
+What to know:
+
+- **Pin the version.** `DarkhuntPolicy` reads the guard configuration above.
+  AGT is an **optional** peer dependency, pinned to `0.3.1-beta.0` because its
+  spec is a pre-release and may change between versions. Manifests must
+  declare `agent_control_specification_version: 0.3.1-beta`. Prebuilt binaries
+  ship for Linux, macOS and Windows.
+- **AGT's framework adapters don't cover tools.** They guard a run's input and
+  output, not the tools inside it. Put `agtTool` / `runGoverned` where your
+  tools are dispatched.
+- **The run is handed over for you.** ACS calls the policy back from its native
+  runtime, where the caller's async context is gone. `agtTool`, `runGoverned`
+  and `checkToolPoint` pass the current run through. With AGT's own adapters,
+  put the session in the snapshot's `envelope`.
+- **`DarkhuntPolicy` never rejects.** ACS turns a dispatcher error into a deny,
+  so the plug-in applies your `fail` mode itself.
+- **Only `allow`, `deny` and `warn` are mapped.** ACS's `transform` (redact) and
+  `escalate` (approval) have no Darkhunt equivalent yet. Observe-only matches
+  and shadow-mode DENYs come back as `warn`.
 
 ## Documentation
 

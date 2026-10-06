@@ -14,6 +14,7 @@ import {
   type Tracer,
 } from '@opentelemetry/api';
 import { ATTR, GEN_AI } from './attributes.js';
+import { OBSERVATION_KEY } from './current.js';
 import type { HandoffToken, Trace } from './trace.js';
 
 /**
@@ -318,6 +319,8 @@ export class Span extends ActiveChildHost {
   protected readonly otelSpan: OtelSpan;
   protected readonly ctx: Context;
   protected ended = false;
+  private readonly _observationType: ObservationType;
+  private _toolName?: string;
 
   constructor(args: SpanCtorArgs) {
     super();
@@ -334,9 +337,11 @@ export class Span extends ActiveChildHost {
       Object.keys(otelOptions).length > 0 ? otelOptions : undefined,
       parentCtx
     );
-    this.ctx = otTrace.setSpan(parentCtx, this.otelSpan);
+    // The span is also the current observation wherever its context is active.
+    this.ctx = otTrace.setSpan(parentCtx, this.otelSpan).setValue(OBSERVATION_KEY, this);
+    this._observationType = opts.observationType ?? 'span';
 
-    this.otelSpan.setAttribute(ATTR.OBSERVATION_TYPE, opts.observationType ?? 'span');
+    this.otelSpan.setAttribute(ATTR.OBSERVATION_TYPE, this._observationType);
     this.applyTraceAttrs();
     if (opts.input !== undefined) this.setIo(ATTR.OBSERVATION_INPUT, opts.input);
     if (opts.output !== undefined) this.setIo(ATTR.OBSERVATION_OUTPUT, opts.output);
@@ -363,6 +368,21 @@ export class Span extends ActiveChildHost {
 
   get trace(): Trace {
     return this.traceRef;
+  }
+
+  /** The observation type this span was opened with (`tool`, `generation`, …). */
+  get observationType(): ObservationType {
+    return this._observationType;
+  }
+
+  /** The tool name, for `tool`-type spans. */
+  get toolName(): string | undefined {
+    return this._toolName;
+  }
+
+  /** The underlying OTel span (its id doubles as a stable tool-call id). */
+  get otel(): OtelSpan {
+    return this.otelSpan;
   }
 
   span(name: string, options?: SpanOptions): Span {
@@ -451,6 +471,7 @@ export class Span extends ActiveChildHost {
     toolCallId?: string;
     toolArguments?: unknown;
   }): void {
+    if (opts.toolName) this._toolName = opts.toolName;
     this.setStringAttr(GEN_AI.TOOL_NAME, opts.toolName);
     this.setStringAttr(GEN_AI.TOOL_CALL_ID, opts.toolCallId);
     if (opts.toolArguments !== undefined)

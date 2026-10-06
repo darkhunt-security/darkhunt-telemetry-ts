@@ -43,6 +43,16 @@
       "import": "./dist/temporal/workflow-interceptors.js",
       "default": "./dist/temporal/workflow-interceptors.js"
     },
+    "./guard": {
+      "types": "./dist/guard/index.d.ts",
+      "import": "./dist/guard/index.js",
+      "default": "./dist/guard/index.js"
+    },
+    "./agt": {
+      "types": "./dist/agt.d.ts",
+      "import": "./dist/agt.js",
+      "default": "./dist/agt.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -87,6 +97,7 @@
     "@temporalio/worker": "^1.20.2",
     "@temporalio/workflow": "^1.20.2",
     "@types/node": "^25.0.0",
+    "agent-control-specification": "0.3.1-beta.0",
     "c8": "^11.0.0",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^10.0.0",
@@ -99,7 +110,8 @@
   "peerDependencies": {
     "@temporalio/common": ">=1.11.0 <2",
     "@temporalio/worker": ">=1.11.0 <2",
-    "@temporalio/workflow": ">=1.11.0 <2"
+    "@temporalio/workflow": ">=1.11.0 <2",
+    "agent-control-specification": "0.3.1-beta.0"
   },
   "peerDependenciesMeta": {
     "@temporalio/common": {
@@ -109,6 +121,9 @@
       "optional": true
     },
     "@temporalio/workflow": {
+      "optional": true
+    },
+    "agent-control-specification": {
       "optional": true
     }
   }
