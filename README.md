@@ -469,8 +469,10 @@ return trace.activate(async () => {
 - **Outside a trace:** `checkOutput(answer, { sessionId })` files the check under a
   run you have already handed off (a gateway checking the answer afterwards).
 - **Budget:** content is classified by a model, so these checks use
-  `resultTimeoutMs`, not the tighter `callTimeoutMs`. Text over `maxResultBytes` is
-  sent truncated.
+  `resultTimeoutMs`, not the tighter `callTimeoutMs`.
+- **Size:** only the first `maxResultBytes` of each message are sent, as with a tool
+  result; anything after that is not checked. Raise the cap
+  (`DARKHUNT_GUARD_MAX_RESULT`) if your requests or answers can be longer.
 - **Act on `verdict.blocked`,** as with tools: a DENY in `shadow` mode is `denied`
   but not `blocked`.
 

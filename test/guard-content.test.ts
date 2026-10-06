@@ -111,6 +111,19 @@ describe('checkInput / checkOutput', () => {
     assert.equal(req!.body.applicationId, 'app9');
   });
 
+  it('prefers the trace’s session over a given one', async () => {
+    configure();
+    await newTrace('task-9').activate(() => checkInput(REQUEST, { sessionId: 'other' }));
+    assert.equal(stub.requests[0]!.body.sessionId, 'task-9');
+  });
+
+  it('still sends an empty message list', async () => {
+    configure();
+    const v = await newTrace().activate(() => checkInput([]));
+    assert.deepEqual(stub.requests[0]!.body.messages, []);
+    assert.equal(v.decision, 'ALLOW');
+  });
+
   it('blocks a deny in enforce mode and only reports it in shadow', async () => {
     stub.deny('INPUT', '', 'Prompt injection in the request');
     configure();

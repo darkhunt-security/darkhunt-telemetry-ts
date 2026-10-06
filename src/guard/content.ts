@@ -36,8 +36,8 @@ export type Content = string | ContentMessage[];
 
 export interface ContentCheckOptions {
   /**
-   * The session to file the check under when there is no current trace (a gateway
-   * checking a run it has already handed off). Inside a trace, the trace's is used.
+   * The session to file the check under when the current trace has none, or there is
+   * no trace (a gateway checking a run it has already handed off).
    */
   sessionId?: string;
   /** A configuration (or a function returning one) instead of the process-wide one. */
@@ -73,7 +73,7 @@ async function checkContent(
     stage,
     workspaceId: trace?.workspaceId || config.workspaceId,
     applicationId: trace?.applicationId || config.applicationId,
-    sessionId: options.sessionId || trace?.sessionId,
+    sessionId: trace?.sessionId || options.sessionId,
     userId: trace?.userId,
     userEmail: trace?.userEmail,
     source: config.source ?? trace?.agent,
