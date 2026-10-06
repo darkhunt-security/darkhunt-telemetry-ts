@@ -21,7 +21,7 @@ export async function verify(
   body: Record<string, unknown>,
   timeoutMs: number
 ): Promise<Verdict> {
-  const tool = (body.tool as { name?: string } | undefined)?.name ?? 'tool';
+  const tool = (body.tool as { name?: string } | undefined)?.name ?? '';
   const stage = body.stage as Stage;
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...config.headers };
   if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;

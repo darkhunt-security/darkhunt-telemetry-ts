@@ -26,7 +26,7 @@ import { Span } from '../span.js';
 import type { Trace } from '../trace.js';
 import { check, jsonSafe } from './check.js';
 import { getGuardConfig, type GuardConfig } from './config.js';
-import { DarkhuntBlockedError, Verdict } from './verdict.js';
+import { DarkhuntBlockedError, refusal, Verdict } from './verdict.js';
 
 export type OnDeny<D> = 'return' | 'throw' | ((verdict: Verdict) => D);
 
@@ -63,12 +63,6 @@ export function defaultArguments(args: unknown[]): unknown {
   if (isPlainObject(args[0])) return args[0];
   if (args.length === 0) return {};
   return { args };
-}
-
-function refusal(v: Verdict): string {
-  return v.stage === 'TOOL_CALL'
-    ? `Blocked by Darkhunt: ${v.reason}. The ${v.tool} tool was not run.`
-    : `Withheld by Darkhunt: ${v.reason}. The ${v.tool} tool ran, but its output was withheld.`;
 }
 
 /**

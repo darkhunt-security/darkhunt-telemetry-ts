@@ -16,7 +16,13 @@ export interface RecordedRequest {
     source?: string;
     applicationId?: string;
     tool: { name: string; callId: string; arguments: unknown; result?: unknown };
+    messages?: { role: string; content: string }[];
   };
+}
+
+/** The checked tool's name; empty for a request or answer check, which has no tool. */
+function toolName(body: RecordedRequest['body']): string {
+  return (body as { tool?: { name: string } }).tool?.name ?? '';
 }
 
 export class VerifyStub {
@@ -32,7 +38,9 @@ export class VerifyStub {
       req.on('end', () => {
         const body = JSON.parse(raw) as RecordedRequest['body'];
         this.requests.push({ path: req.url ?? '', headers: req.headers, body });
-        const answer = this.rules.get(`${body.stage}:${body.tool.name}`) ?? { decision: 'ALLOW' };
+        const answer = this.rules.get(`${body.stage}:${toolName(body)}`) ?? {
+          decision: 'ALLOW',
+        };
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ stage: body.stage, failed: false, ...answer }));
       });
@@ -57,7 +65,7 @@ export class VerifyStub {
   }
 
   stages(): string[] {
-    return this.requests.map((r) => `${r.body.stage}:${r.body.tool.name}`);
+    return this.requests.map((r) => `${r.body.stage}:${toolName(r.body)}`);
   }
 
   async stop(): Promise<void> {
