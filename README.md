@@ -14,11 +14,18 @@ It can also **enforce**: [`guard()`](#guard-tool-calls-guard) asks Darkhunt befo
 > 🤖 **Skip the manual wiring** — if you use Claude Code, install the Darkhunt plugin once:
 >
 > ```
-> /plugin marketplace add darkhunt-security/darkhunt-telemetry-ts
+> /plugin marketplace add darkhunt-security/darkhunt
 > /plugin install darkhunt-telemetry@darkhunt
 > ```
 >
 > Then tell Claude _"add Darkhunt telemetry to this service"_ and the [`darkhunt-telemetry-integration`](https://github.com/darkhunt-security/darkhunt-telemetry-ts/blob/main/plugins/darkhunt-telemetry/skills/darkhunt-telemetry-integration/SKILL.md) skill auto-invokes and does steps 1–5 below for you.
+>
+> The same skill works in **Amp** and **OpenCode**:
+>
+> - **Amp:** run `amp skill add darkhunt-security/darkhunt-telemetry-ts/plugins/darkhunt-telemetry` in your repo root. Add `--global` to use it in every project; run it again with `--overwrite` to update.
+> - **OpenCode** (1.17.12 or later): add `"skills": { "urls": ["https://raw.githubusercontent.com/darkhunt-security/darkhunt-telemetry-ts/main/plugins/darkhunt-telemetry/skills/"] }` to `opencode.json`, then restart OpenCode. New versions of the skill arrive on their own.
+>
+> In either, start your prompt with _"Use the darkhunt-telemetry-integration skill."_
 
 ---
 

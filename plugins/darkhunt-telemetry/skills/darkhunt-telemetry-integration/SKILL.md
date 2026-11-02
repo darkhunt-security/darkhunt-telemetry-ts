@@ -1,22 +1,6 @@
 ---
 name: darkhunt-telemetry-integration
-description: |
-  Use this skill when integrating `@darkhunt-security/telemetry` (the Darkhunt
-  trace-hub TypeScript SDK) into a Node.js / TypeScript service. Covers: install,
-  creating an API key, singleton client setup, trace + generation + span
-  emission, backdated `startTime`, graceful shutdown, routing-field discipline
-  (tenantId / workspaceId / applicationId), multi-agent topology
-  + agent handoffs (`trace.handoffToken()` / `handoffFrom`, span links, worker-vs-agent,
-  loops & cycles), and the canonical SDK-field-to-trace-hub mapping (what attributes the
-  backend actually reads). Auto-invoke when the user asks about adding LLM tracing,
-  sending spans to Darkhunt trace-hub, integrating Darkhunt observability, wiring
-  DarkhuntTelemetry / `client.trace()` / `trace.generation()` calls, or building a
-  multi-agent system where agents hand off to each other (agent topology / handoff
-  links / loops). Also covers guarding tool calls with `guard()` (Darkhunt rules
-  block a call before it runs or withhold its output) and plugging Darkhunt in as
-  the policy behind Microsoft's Agent Governance Toolkit (AGT) — auto-invoke when
-  the user asks to guard, block or enforce policy on an agent's tool calls, or to
-  integrate AGT.
+description: "Darkhunt telemetry for Node.js and TypeScript services (the @darkhunt-security/telemetry SDK). Use when the user asks to add Darkhunt telemetry, LLM tracing or observability to a service, send spans to Darkhunt trace-hub, or wire DarkhuntTelemetry, client.trace() or trace.generation() calls. Covers install, API keys, the singleton client, trace, generation and span emission, backdated startTime, shutdown, routing fields (tenantId, workspaceId, applicationId), multi-agent topology with handoffs (handoffToken and handoffFrom, span links, workers vs agents, loops and cycles) and the SDK-to-trace-hub field mapping. Also use when the user asks to guard, block or enforce policy on an agent's tool calls with guard(), or to plug Darkhunt into Microsoft's Agent Governance Toolkit (AGT)."
 ---
 
 # Darkhunt telemetry SDK — integration guide
@@ -112,6 +96,25 @@ and set them as `DARKHUNT_TENANT_ID`, `DARKHUNT_WORKSPACE_ID`,
 `DARKHUNT_APPLICATION_ID` — the SDK reads those automatically too (see
 [Routing fields](#routing-fields)).
 
+> **The key is in `.env`? Leave the file closed.** Opening, `cat`-ing or printing
+> `.env` sends the key to the model and into the session transcript, which is
+> exactly what keeping it out of the prompt avoids. Check that it is set without
+> revealing it (`grep -c '^DARKHUNT_API_KEY=' .env` prints a count, not the value),
+> and never copy the key into source, committed config, or your report.
+
+**When the user hands you the routing IDs** (the dashboard's onboarding prompt
+includes `DARKHUNT_TENANT_ID`, `DARKHUNT_WORKSPACE_ID` and `DARKHUNT_APPLICATION_ID`),
+they are not secrets: add them next to the key, still without printing the file, and
+add the variable names (no values) to `.env.example` if the project keeps one. Don't
+create a new application when one is supplied: the dashboard made a dedicated one.
+
+```bash
+[ -s .env ] && [ -n "$(tail -c1 .env)" ] && echo >> .env   # end .env with a newline first
+for kv in DARKHUNT_TENANT_ID=<tenant> DARKHUNT_WORKSPACE_ID=<workspace> DARKHUNT_APPLICATION_ID=<app>; do
+  grep -q "^${kv%%=*}=" .env 2>/dev/null || echo "$kv" >> .env
+done
+```
+
 The base URL defaults to `https://api.darkhunt.ai/trace-hub`; override it via the
 `DARKHUNT_BASE_URL` env var or the `baseUrl` option when pointing at a
 self-hosted / staging / dev trace-hub. **Two rules when you override it:** use the
@@ -130,6 +133,22 @@ emits `service.name` as a span attribute, which outranks the Resource at ingest.
 For `tool`-type observations, set **`toolName`** (and optionally `toolCallId` / `toolArguments`) on
 the span — emitted as `gen_ai.tool.name` / `gen_ai.tool.call.id` / `gen_ai.tool.call.arguments`, the
 fields the backend uses to show the actual tool (e.g. "geocode") rather than the generic type.
+
+### 2b. Make sure the service actually loads `.env`
+
+The SDK reads `process.env` only, and Node never loads `.env` by itself. If nothing in
+the service does, the variables are missing at runtime and `new DarkhuntTelemetry()`
+throws `apiKey is required for the public endpoint` as soon as `src/telemetry.ts` is
+imported. Find out how this service gets its configuration before you finish:
+
+- **Something already loads it** (Next.js, Bun, NestJS `ConfigModule`, `dotenv`,
+  `docker compose` `env_file:`): make sure that happens **before** the module that
+  constructs the client is imported.
+- **Nothing loads it:** start Node with `--env-file=.env` (Node ≥ 20.6), or make
+  `import 'dotenv/config';` the first import of the entrypoint, and say so in your
+  report.
+- **It is configured only through the deployment's environment:** don't add a loader;
+  tell the user which `DARKHUNT_*` variables must be set there.
 
 ### 3. Singleton client (process-wide)
 
@@ -542,6 +561,26 @@ npx tsc --noEmit          # ensure types resolve
 npm test                  # if the integration has unit-test coverage
 ```
 
+Then probe auth and routing on the server. A clean `flush()` is not proof of ingestion
+(the BatchSpanProcessor swallows export errors); this is. **400** on the empty body
+means auth and routing are OK, **401** a wrong or missing key, **404** a `baseUrl`
+without `/trace-hub`:
+
+```bash
+( set -a; . ./.env; set +a   # load .env into this subshell only; never print it
+  curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+    -H "Authorization: Bearer $DARKHUNT_API_KEY" \
+    -H 'Content-Type: application/x-protobuf' \
+    -H "X-Workspace-Id: $DARKHUNT_WORKSPACE_ID" \
+    -H "X-Application-Id: $DARKHUNT_APPLICATION_ID" \
+    --data-binary '' \
+    "${DARKHUNT_BASE_URL:-https://api.darkhunt.ai/trace-hub}/otlp/t/$DARKHUNT_TENANT_ID/v1/traces" )
+```
+
+Drop the first line if the variables are already exported. `. ./.env` runs the file as
+shell; if it isn't shell-compatible, export the variables another way, never by
+printing the file.
+
 Then exercise a real path that emits a span and check trace-hub for the
 incoming trace. The dashboard should show one trace per `sessionId`, each
 generation rendering `inputMessages` / `outputMessages` as chat bubbles, the
@@ -551,6 +590,11 @@ generation spans.
 If spans don't appear, check: (1) routing fields are populated, (2) `baseUrl`
 points at the right environment, (3) the `apiKey` is valid, (4) the process
 exits gracefully so `flush()` runs (a `kill -9` loses the in-memory batch).
+
+When you finish, report: the files you changed and why; where each `DARKHUNT_*`
+variable is set (never the key's value); the probe's status code; and what the user
+still has to do (restart the service, set the variables in deployment, send one real
+request).
 
 ## Common pitfalls
 
@@ -571,6 +615,8 @@ exits gracefully so `flush()` runs (a `kill -9` loses the in-memory batch).
 7. **`guard` wrapped around a framework tool _object_.** It needs the implementation function (`execute` / `func`), not the tool the framework built from it.
 8. **`enforce` without `DARKHUNT_GUARD_FAIL`.** `configureGuard` throws. Choose `open` or `closed` deliberately.
 9. **Guarded tools called outside the run.** The checks carry no session, so session rules can't apply and the enforcement log can't group them. Use `trace.activate(...)`.
+10. **Reading `.env` to check the key.** The key lands in the model's context and the transcript. Check with `grep -c`, and load it into a subshell only for the probe.
+11. **A service that never loads `.env`.** The constructor throws at import. See §2b.
 
 ## When to read the SDK docs
 
