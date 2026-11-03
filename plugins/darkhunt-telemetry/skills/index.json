@@ -1,0 +1,9 @@
+{
+  "skills": [
+    {
+      "name": "darkhunt-telemetry-integration",
+      "version": "a64df3e8cca7f110eead7741ab6982f1abe6f01bd5cce0eb71647b4e7c2e6e62",
+      "files": ["SKILL.md"]
+    }
+  ]
+}

@@ -56,6 +56,48 @@ jobs:
       # (the SonarQube Cloud GitHub App scans pushes and PRs directly — no CI
       # scanner step and no SONAR_TOKEN secret required).
 
+  skill:
+    # The plugin's SKILL.md doubles as an OpenCode HTTP skill catalog
+    # (plugins/darkhunt-telemetry/skills/index.json). OpenCode re-downloads a
+    # catalog skill only when its `version` changes, so `version` must be the
+    # sha256 of SKILL.md, as a string. Amp and the Agent Skills spec also cap
+    # `description` at 1024 characters, and agents key skills by directory name.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Check skill frontmatter and OpenCode catalog
+        env:
+          SKILLS_DIR: plugins/darkhunt-telemetry/skills
+          SKILL: darkhunt-telemetry-integration
+        run: |
+          file="$SKILLS_DIR/$SKILL/SKILL.md"
+          catalog="$SKILLS_DIR/index.json"
+          if ! grep -qx "name: $SKILL" "$file"; then
+            echo "::error file=$file::frontmatter name must be $SKILL, the directory name"
+            exit 1
+          fi
+          line=$(sed -n '2,/^---$/{/^description: /p;}' "$file")
+          desc=${line#description: }
+          case "$desc" in
+            \"*\" | \'*\') desc=${desc:1:${#desc}-2} ;;
+            *) desc= ;;
+          esac
+          if [ -z "$desc" ] || [ "${#desc}" -gt 1024 ]; then
+            echo "::error file=$file::description must be one quoted line of at most 1024 characters (found ${#desc})"
+            exit 1
+          fi
+          want=$(sha256sum "$file" | cut -d' ' -f1)
+          have=$(jq -r --arg n "$SKILL" '.skills[] | select(.name == $n and (.files | index("SKILL.md"))) | .version | strings' "$catalog")
+          if [ "$have" != "$want" ]; then
+            echo "::error file=$catalog::$SKILL version must be the string \"$want\" (sha256 of SKILL.md), found \"$have\""
+            exit 1
+          fi
+
   publish:
     needs: lint
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
